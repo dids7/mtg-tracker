@@ -1,0 +1,777 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Livro de Partidas · Pauper</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Zilla+Slab:wght@500;700&family=Roboto+Condensed:wght@400;500;700&display=swap');
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #EFE9D8; color: #2A2621; font-family: 'Roboto Condensed', sans-serif; }
+  input, select, textarea, button { font-family: 'Roboto Condensed', sans-serif; }
+  input:focus, select:focus, textarea:focus { outline: 2px solid #B15C3E; outline-offset: 1px; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<!-- React (UMD, no build step needed) -->
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+<!-- Firebase (modular SDK via CDN) -->
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+  import {
+    getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut
+  } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+  import {
+    getFirestore, doc, getDoc, setDoc
+  } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+  // >>> COLE AQUI O SEU firebaseConfig (Configurações do projeto > Geral > Seus apps) <<<
+  const firebaseConfig = {
+    apiKey: "COLE_AQUI",
+    authDomain: "COLE_AQUI.firebaseapp.com",
+    projectId: "COLE_AQUI",
+    storageBucket: "COLE_AQUI.appspot.com",
+    messagingSenderId: "COLE_AQUI",
+    appId: "COLE_AQUI",
+  };
+
+  const app = initializeApp(firebaseConfig);
+  window.__fb = {
+    auth: getAuth(app),
+    provider: new GoogleAuthProvider(),
+    db: getFirestore(app),
+    signInWithPopup, onAuthStateChanged, signOut, doc, getDoc, setDoc,
+  };
+  window.__fbReady = true;
+  window.dispatchEvent(new Event("firebase-ready"));
+</script>
+
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useMemo } = React;
+
+// ---------- Helpers ----------
+function uid() {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+}
+function todayISO() {
+  return new Date().toISOString().slice(0, 10);
+}
+function emptyGame() {
+  return { resultado: null, mulligan: 0 };
+}
+function emptyForm() {
+  return {
+    formato: "", meuDeck: "", oponenteDeck: "", games: [emptyGame(), emptyGame()],
+    tipo: "treino", local: "", data: todayISO(), rodada: "", colocacao: "", nota: "",
+  };
+}
+function matchOutcome(games) {
+  const played = games.filter((g) => g.resultado);
+  const wins = played.filter((g) => g.resultado === "vitoria").length;
+  const losses = played.filter((g) => g.resultado === "derrota").length;
+  if (wins >= 2) return { outcome: "vitoria", score: `${wins}-${losses}` };
+  if (losses >= 2) return { outcome: "derrota", score: `${wins}-${losses}` };
+  return { outcome: null, score: `${wins}-${losses}` };
+}
+function needsGame3(games) {
+  return games[0].resultado && games[1].resultado && games[0].resultado !== games[1].resultado;
+}
+function barColor(wr) {
+  if (wr >= 60) return "#4B6B4E";
+  if (wr >= 40) return "#B08B3E";
+  return "#8A3F35";
+}
+
+// ---------- Firestore data layer ----------
+async function loadData(uidStr) {
+  const { db, doc, getDoc } = window.__fb;
+  const ref = doc(db, "users", uidStr);
+  const snap = await getDoc(ref);
+  if (snap.exists()) {
+    const d = snap.data();
+    const decksRaw = d.decks || [];
+    // Migração: decks antigos eram strings soltas, sem formato
+    const decks = decksRaw.map((dk) => (typeof dk === "string" ? { name: dk, formato: "" } : dk));
+    return { formatos: d.formatos || [], decks, matches: d.matches || [] };
+  }
+  return { formatos: [], decks: [], matches: [] };
+}
+async function saveData(uidStr, data) {
+  const { db, doc, setDoc } = window.__fb;
+  const ref = doc(db, "users", uidStr);
+  await setDoc(ref, data);
+}
+
+// ---------- Auth gate ----------
+function useFirebaseReady() {
+  const [ready, setReady] = useState(!!window.__fbReady);
+  useEffect(() => {
+    if (window.__fbReady) return;
+    const handler = () => setReady(true);
+    window.addEventListener("firebase-ready", handler);
+    return () => window.removeEventListener("firebase-ready", handler);
+  }, []);
+  return ready;
+}
+
+function LoginScreen({ onSignIn, errorMsg }) {
+  return (
+    <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 24, textAlign: "center" }}>
+      <div style={{ fontSize: 11, letterSpacing: 2, textTransform: "uppercase", color: "#6E6656" }}>Multi-formato</div>
+      <h1 style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 28, margin: "6px 0 24px" }}>Livro de Partidas</h1>
+      <button
+        onClick={onSignIn}
+        style={{ padding: "14px 24px", borderRadius: 8, border: "none", background: "#2A2621", color: "#EFE9D8", fontWeight: 700, fontSize: 15, cursor: "pointer" }}
+      >
+        Entrar com Google
+      </button>
+      {errorMsg && <div style={{ color: "#8A3F35", fontSize: 13, marginTop: 14, maxWidth: 300 }}>{errorMsg}</div>}
+    </div>
+  );
+}
+
+function App() {
+  const fbReady = useFirebaseReady();
+  const [user, setUser] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [authError, setAuthError] = useState("");
+
+  useEffect(() => {
+    if (!fbReady) return;
+    const { auth, onAuthStateChanged } = window.__fb;
+    const unsub = onAuthStateChanged(auth, (u) => {
+      setUser(u);
+      setAuthLoading(false);
+    });
+    return unsub;
+  }, [fbReady]);
+
+  async function handleSignIn() {
+    setAuthError("");
+    try {
+      await window.__fb.signInWithPopup(window.__fb.auth, window.__fb.provider);
+    } catch (e) {
+      setAuthError("Não consegui entrar: " + (e && e.message ? e.message : "erro desconhecido"));
+    }
+  }
+  async function handleSignOut() {
+    await window.__fb.signOut(window.__fb.auth);
+  }
+
+  if (!fbReady || authLoading) {
+    return <div style={{ padding: 24, color: "#6E6656" }}>Carregando…</div>;
+  }
+  if (!user) {
+    return <LoginScreen onSignIn={handleSignIn} errorMsg={authError} />;
+  }
+  return <PauperTracker user={user} onSignOut={handleSignOut} />;
+}
+
+// ---------- Main app ----------
+function PauperTracker({ user, onSignOut }) {
+  const [screen, setScreen] = useState("registrar");
+  const [data, setData] = useState({ formatos: [], decks: [], matches: [] });
+  const [loading, setLoading] = useState(true);
+  const [form, setForm] = useState(emptyForm());
+  const [saving, setSaving] = useState(false);
+  const [savedFlash, setSavedFlash] = useState(false);
+  const [error, setError] = useState("");
+  const [statsFormato, setStatsFormato] = useState("__all__");
+  const [statsDeck, setStatsDeck] = useState("__all__");
+  const [newDeckName, setNewDeckName] = useState("");
+  const [newDeckFormato, setNewDeckFormato] = useState("");
+  const [deckError, setDeckError] = useState("");
+  const [newFormatoName, setNewFormatoName] = useState("");
+  const [formatoError, setFormatoError] = useState("");
+  const [editingId, setEditingId] = useState(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState(null);
+  const [chartType, setChartType] = useState("bar");
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const d = await loadData(user.uid);
+        setData(d);
+      } catch (e) {
+        setError("Não consegui carregar seus dados: " + (e && e.message ? e.message : "erro"));
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, [user.uid]);
+
+  async function persist(next) {
+    try {
+      await saveData(user.uid, next);
+      return true;
+    } catch (e) {
+      setError("Não consegui salvar: " + (e && e.message ? e.message : "erro desconhecido"));
+      return false;
+    }
+  }
+
+  function updateField(field, value) {
+    setForm((f) => ({ ...f, [field]: value }));
+  }
+  function updateGame(index, patch) {
+    setForm((f) => {
+      const games = f.games.map((g, i) => (i === index ? { ...g, ...patch } : g));
+      const trimmed = needsGame3(games) ? games : games.slice(0, 2);
+      return { ...f, games: trimmed };
+    });
+  }
+  function addGame3() {
+    setForm((f) => (f.games.length < 3 ? { ...f, games: [...f.games, emptyGame()] } : f));
+  }
+
+  async function handleAddFormato() {
+    const name = newFormatoName.trim();
+    if (!name) { setFormatoError("Digita um nome pro formato."); return; }
+    if (data.formatos.some((f) => f.toLowerCase() === name.toLowerCase())) { setFormatoError("Esse formato já está cadastrado."); return; }
+    setFormatoError("");
+    const next = { ...data, formatos: [...data.formatos, name] };
+    setData(next);
+    setNewFormatoName("");
+    await persist(next);
+  }
+  async function handleRemoveFormato(name) {
+    const next = { ...data, formatos: data.formatos.filter((f) => f !== name) };
+    setData(next);
+    await persist(next);
+  }
+
+  async function handleAddDeck() {
+    const name = newDeckName.trim();
+    if (!name) { setDeckError("Digita um nome pro deck."); return; }
+    if (!newDeckFormato) { setDeckError("Escolhe o formato desse deck."); return; }
+    if (data.decks.some((d) => d.name.toLowerCase() === name.toLowerCase() && d.formato === newDeckFormato)) { setDeckError("Esse deck já está cadastrado nesse formato."); return; }
+    setDeckError("");
+    const next = { ...data, decks: [...data.decks, { name, formato: newDeckFormato }] };
+    setData(next);
+    setNewDeckName("");
+    await persist(next);
+  }
+  async function handleRemoveDeck(name, formato) {
+    const next = { ...data, decks: data.decks.filter((d) => !(d.name === name && d.formato === formato)) };
+    setData(next);
+    await persist(next);
+  }
+
+  function startEdit(match) {
+    setForm({
+      formato: match.formato || "", meuDeck: match.meuDeck, oponenteDeck: match.oponenteDeck,
+      games: match.games.map((g) => ({ ...g })), tipo: match.tipo,
+      local: match.local || "", data: match.data, rodada: match.rodada || "",
+      colocacao: match.colocacao || "", nota: match.nota || "",
+    });
+    setEditingId(match.id);
+    setError("");
+    setScreen("registrar");
+  }
+  function cancelEdit() {
+    setEditingId(null);
+    setForm(emptyForm());
+    setError("");
+  }
+  async function handleDelete(id) {
+    const next = { ...data, matches: data.matches.filter((m) => m.id !== id) };
+    setData(next);
+    setConfirmDeleteId(null);
+    await persist(next);
+  }
+
+  async function handleSave() {
+    setError("");
+    setSaving(true);
+    const outcome = matchOutcome(form.games);
+
+    if (!form.formato) {
+      setSaving(false); setError("Escolhe o formato da partida."); return;
+    }
+    if (!form.meuDeck.trim() || !form.oponenteDeck.trim()) {
+      setSaving(false); setError("Preenche pelo menos seu deck e o deck do oponente."); return;
+    }
+    if (!form.games[0].resultado || !form.games[1].resultado) {
+      setSaving(false); setError("Registra o resultado do Jogo 1 e do Jogo 2 pelo menos."); return;
+    }
+    if (needsGame3(form.games) && (form.games.length < 3 || !form.games[2].resultado)) {
+      setSaving(false); setError("A partida está 1-1, registra o resultado do Jogo 3."); return;
+    }
+
+    try {
+      const matchPayload = {
+        id: editingId || uid(), formato: form.formato, meuDeck: form.meuDeck.trim(), oponenteDeck: form.oponenteDeck.trim(),
+        games: form.games, resultado: outcome.outcome, score: outcome.score,
+        tipo: form.tipo, local: form.local, data: form.data, rodada: form.rodada,
+        colocacao: form.colocacao, nota: form.nota,
+      };
+      const nextMatches = editingId
+        ? data.matches.map((m) => (m.id === editingId ? matchPayload : m))
+        : [...data.matches, matchPayload];
+      const next = { formatos: data.formatos, decks: data.decks, matches: nextMatches };
+
+      const ok = await persist(next);
+      setData(next);
+      if (ok) {
+        if (editingId) {
+          setEditingId(null); setForm(emptyForm()); setScreen("estatisticas");
+        } else {
+          setForm({ ...emptyForm(), formato: matchPayload.formato, meuDeck: matchPayload.meuDeck, tipo: matchPayload.tipo, local: matchPayload.tipo === "torneio" ? matchPayload.local : "" });
+        }
+        setSavedFlash(true);
+        setTimeout(() => setSavedFlash(false), 1500);
+      }
+    } catch (e) {
+      setError("Algo deu errado ao salvar: " + (e && e.message ? e.message : "erro desconhecido"));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const deckOptionsForForm = data.decks.filter((d) => d.formato === form.formato).map((d) => d.name);
+  const filteredMatches = useMemo(() => {
+    let list = data.matches;
+    if (statsFormato !== "__all__") list = list.filter((m) => m.formato === statsFormato);
+    if (statsDeck !== "__all__") list = list.filter((m) => m.meuDeck === statsDeck);
+    return list;
+  }, [data.matches, statsFormato, statsDeck]);
+  const deckOptionsForStats = useMemo(() => {
+    const names = statsFormato === "__all__"
+      ? data.decks.map((d) => d.name)
+      : data.decks.filter((d) => d.formato === statsFormato).map((d) => d.name);
+    return Array.from(new Set(names));
+  }, [data.decks, statsFormato]);
+  const overall = useMemo(() => {
+    const total = filteredMatches.length;
+    const wins = filteredMatches.filter((m) => m.resultado === "vitoria").length;
+    const losses = filteredMatches.filter((m) => m.resultado === "derrota").length;
+    return { total, wins, losses, winRate: total ? Math.round((wins / total) * 100) : 0 };
+  }, [filteredMatches]);
+  const matchupStats = useMemo(() => {
+    const byOpp = {};
+    filteredMatches.forEach((m) => {
+      byOpp[m.oponenteDeck] = byOpp[m.oponenteDeck] || { total: 0, wins: 0 };
+      byOpp[m.oponenteDeck].total += 1;
+      if (m.resultado === "vitoria") byOpp[m.oponenteDeck].wins += 1;
+    });
+    return Object.entries(byOpp)
+      .map(([opp, v]) => ({ opp, total: v.total, wins: v.wins, winRate: Math.round((v.wins / v.total) * 100) }))
+      .sort((a, b) => b.total - a.total);
+  }, [filteredMatches]);
+  const bestMatchup = matchupStats.filter((m) => m.total >= 2).sort((a, b) => b.winRate - a.winRate)[0];
+  const worstMatchup = matchupStats.filter((m) => m.total >= 2).sort((a, b) => a.winRate - b.winRate)[0];
+  const chartData = matchupStats.map((m) => ({ name: m.opp, winRate: m.winRate, total: m.total }));
+  const totalGamesForPie = chartData.reduce((s, d) => s + d.total, 0);
+  const pieData = chartData.map((d) => ({ ...d, percent: totalGamesForPie ? Math.round((d.total / totalGamesForPie) * 100) : 0 }));
+  const showGame3 = needsGame3(form.games);
+
+  return (
+    <div style={{ minHeight: "100vh" }}>
+      <div style={{ padding: "18px 16px 10px", borderBottom: "3px solid #2A2621", display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+        <div>
+          <div style={{ fontSize: 11, letterSpacing: 2, textTransform: "uppercase", color: "#6E6656" }}>Multi-formato</div>
+          <h1 style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 26, margin: "4px 0 0" }}>Livro de Partidas</h1>
+        </div>
+        <div style={{ textAlign: "right" }}>
+          <div style={{ fontSize: 11, color: "#6E6656" }}>{user.displayName || user.email}</div>
+          <button onClick={onSignOut} style={{ border: "none", background: "transparent", color: "#8A3F35", fontSize: 11, fontWeight: 700, cursor: "pointer", padding: 0, marginTop: 4 }}>
+            Sair
+          </button>
+        </div>
+      </div>
+
+      <div style={{ display: "flex", background: "#E4DBC0" }}>
+        {[{ key: "registrar", label: "Registrar" }, { key: "estatisticas", label: "Estatísticas" }, { key: "decks", label: "Decks" }, { key: "formatos", label: "Formatos" }].map((t) => (
+          <button key={t.key} onClick={() => setScreen(t.key)} style={{
+            flex: 1, padding: "14px 8px", border: "none",
+            background: screen === t.key ? "#F6F1E1" : "transparent",
+            borderBottom: screen === t.key ? "3px solid #B15C3E" : "3px solid transparent",
+            fontSize: 14, fontWeight: screen === t.key ? 700 : 500,
+            color: screen === t.key ? "#2A2621" : "#6E6656", cursor: "pointer",
+          }}>{t.label}</button>
+        ))}
+      </div>
+
+      <div style={{ padding: 16 }}>
+        {loading && <div style={{ color: "#6E6656", fontSize: 14 }}>Carregando…</div>}
+        {error && <div style={{ background: "#F2E1DC", borderLeft: "4px solid #8A3F35", borderRadius: 6, padding: "10px 12px", fontSize: 13, marginBottom: 14 }}>{error}</div>}
+
+        {!loading && screen === "registrar" && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            {editingId && (
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "#EFE0C9", borderLeft: "4px solid #B15C3E", borderRadius: 6, padding: "10px 12px", fontSize: 13 }}>
+                <span>Editando partida salva</span>
+                <button onClick={cancelEdit} style={{ border: "none", background: "transparent", color: "#8A3F35", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>Cancelar</button>
+              </div>
+            )}
+
+            <Field label="Formato">
+              {data.formatos.length === 0 ? (
+                <div style={{ fontSize: 13, color: "#8A3F35" }}>Nenhum formato cadastrado. Vai na aba "Formatos" primeiro.</div>
+              ) : (
+                <select value={form.formato} onChange={(e) => setForm((f) => ({ ...f, formato: e.target.value, meuDeck: "", oponenteDeck: "" }))} style={inputStyle}>
+                  <option value="">Selecione um formato</option>
+                  {data.formatos.map((f) => <option key={f} value={f}>{f}</option>)}
+                </select>
+              )}
+            </Field>
+
+            <Field label="Meu deck">
+              {!form.formato ? (
+                <div style={{ fontSize: 13, color: "#8A3F35" }}>Escolhe o formato primeiro.</div>
+              ) : deckOptionsForForm.length === 0 ? (
+                <div style={{ fontSize: 13, color: "#8A3F35" }}>Nenhum deck cadastrado nesse formato. Vai na aba "Decks".</div>
+              ) : (
+                <select value={form.meuDeck} onChange={(e) => updateField("meuDeck", e.target.value)} style={inputStyle}>
+                  <option value="">Selecione um deck</option>
+                  {deckOptionsForForm.map((d) => <option key={d} value={d}>{d}</option>)}
+                </select>
+              )}
+            </Field>
+            <Field label="Deck do oponente">
+              {!form.formato ? (
+                <div style={{ fontSize: 13, color: "#8A3F35" }}>Escolhe o formato primeiro.</div>
+              ) : deckOptionsForForm.length === 0 ? (
+                <div style={{ fontSize: 13, color: "#8A3F35" }}>Cadastra os decks na aba "Decks" primeiro.</div>
+              ) : (
+                <select value={form.oponenteDeck} onChange={(e) => updateField("oponenteDeck", e.target.value)} style={inputStyle}>
+                  <option value="">Selecione um deck</option>
+                  {deckOptionsForForm.map((d) => <option key={d} value={d}>{d}</option>)}
+                </select>
+              )}
+            </Field>
+
+            <GameRow label="Jogo 1" game={form.games[0]} onChange={(p) => updateGame(0, p)} />
+            <GameRow label="Jogo 2" game={form.games[1]} onChange={(p) => updateGame(1, p)} />
+            {showGame3 && (
+              <GameRow label="Jogo 3 (decisivo)" game={form.games[2] || emptyGame()} onChange={(p) => { if (form.games.length < 3) addGame3(); updateGame(2, p); }} />
+            )}
+
+            <div style={{ background: "#F6F1E1", borderRadius: 8, padding: "10px 14px", fontSize: 13, color: "#6E6656", display: "flex", justifyContent: "space-between" }}>
+              <span>Placar da partida</span>
+              <span style={{ fontWeight: 700, color: "#2A2621" }}>{matchOutcome(form.games).score}</span>
+            </div>
+
+            <Field label="Tipo de partida">
+              <div style={{ display: "flex", gap: 8 }}>
+                {[{ key: "torneio", label: "Torneio / Loja" }, { key: "treino", label: "Treino" }].map((o) => (
+                  <button key={o.key} onClick={() => updateField("tipo", o.key)} style={{
+                    flex: 1, padding: "10px 0", borderRadius: 6,
+                    border: form.tipo === o.key ? "2px solid #2A2621" : "1px solid #C9C0A6",
+                    background: form.tipo === o.key ? "#2A2621" : "#F6F1E1",
+                    color: form.tipo === o.key ? "#EFE9D8" : "#2A2621", fontWeight: 700, fontSize: 13, cursor: "pointer",
+                  }}>{o.label}</button>
+                ))}
+              </div>
+            </Field>
+            <Field label={form.tipo === "torneio" ? "Loja / evento" : "Com quem treinou (opcional)"}>
+              <input value={form.local} onChange={(e) => updateField("local", e.target.value)}
+                placeholder={form.tipo === "torneio" ? "Ex: Arena dos Cards" : "Ex: treino com amigos"} style={inputStyle} />
+            </Field>
+            {form.tipo === "torneio" && (
+              <>
+                <Field label="Rodada">
+                  <input type="number" min="1" value={form.rodada} onChange={(e) => updateField("rodada", e.target.value)} placeholder="Ex: 2" style={inputStyle} />
+                </Field>
+                <Field label="Colocação final (opcional)">
+                  <input value={form.colocacao} onChange={(e) => updateField("colocacao", e.target.value)} placeholder="Ex: 3-1, Top 8" style={inputStyle} />
+                </Field>
+              </>
+            )}
+            <Field label="Data">
+              <input type="date" value={form.data} onChange={(e) => updateField("data", e.target.value)} style={inputStyle} />
+            </Field>
+            <Field label="Anotação (opcional)">
+              <textarea value={form.nota} onChange={(e) => updateField("nota", e.target.value)} placeholder="Jogadas erradas, sideboard que funcionou..." rows={3} style={{ ...inputStyle, resize: "vertical" }} />
+            </Field>
+
+            <button onClick={handleSave} disabled={saving} style={{
+              marginTop: 6, padding: "14px", borderRadius: 8, border: "none",
+              background: savedFlash ? "#4B6B4E" : "#2A2621", color: "#EFE9D8",
+              fontWeight: 700, fontSize: 15, letterSpacing: 0.5,
+              cursor: saving ? "default" : "pointer", opacity: saving ? 0.7 : 1,
+            }}>
+              {savedFlash ? "Salvo ✓" : saving ? "Salvando…" : editingId ? "Atualizar partida" : "Salvar partida"}
+            </button>
+          </div>
+        )}
+
+        {!loading && screen === "estatisticas" && (
+          <div>
+            {data.matches.length === 0 ? (
+              <div style={{ color: "#6E6656", fontSize: 14, textAlign: "center", padding: "40px 0" }}>Nenhuma partida registrada ainda.</div>
+            ) : (
+              <>
+                <Field label="Filtrar por formato">
+                  <select value={statsFormato} onChange={(e) => { setStatsFormato(e.target.value); setStatsDeck("__all__"); }} style={inputStyle}>
+                    <option value="__all__">Todos os formatos</option>
+                    {data.formatos.map((f) => <option key={f} value={f}>{f}</option>)}
+                  </select>
+                </Field>
+
+                <Field label="Filtrar por deck">
+                  <select value={statsDeck} onChange={(e) => setStatsDeck(e.target.value)} style={inputStyle}>
+                    <option value="__all__">Todos os decks</option>
+                    {deckOptionsForStats.map((d) => <option key={d} value={d}>{d}</option>)}
+                  </select>
+                </Field>
+
+                <div style={{ background: "#2A2621", color: "#EFE9D8", borderRadius: 10, padding: "20px 18px", margin: "14px 0" }}>
+                  <div style={{ fontSize: 11, letterSpacing: 2, textTransform: "uppercase", color: "#B15C3E" }}>{statsDeck === "__all__" ? "Geral" : statsDeck}</div>
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginTop: 6 }}>
+                    <span style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 44 }}>{overall.winRate}%</span>
+                    <span style={{ fontSize: 13, color: "#C9C0A6" }}>{overall.wins}V / {overall.losses}D em {overall.total} partidas</span>
+                  </div>
+                </div>
+
+                {(bestMatchup || worstMatchup) && (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 }}>
+                    {bestMatchup && <Insight tone="good" text={`Contra ${bestMatchup.opp} você está bem: ${bestMatchup.winRate}% de vitórias (${bestMatchup.wins}/${bestMatchup.total}).`} />}
+                    {worstMatchup && worstMatchup.opp !== bestMatchup?.opp && <Insight tone="bad" text={`Contra ${worstMatchup.opp} você está mal: ${worstMatchup.winRate}% de vitórias (${worstMatchup.wins}/${worstMatchup.total}).`} />}
+                  </div>
+                )}
+
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                  <SectionLabel>Win rate por matchup</SectionLabel>
+                  <div style={{ display: "flex", gap: 6 }}>
+                    {[{ key: "bar", label: "Barras" }, { key: "pizza", label: "Pizza" }].map((o) => (
+                      <button key={o.key} onClick={() => setChartType(o.key)} style={{
+                        padding: "5px 10px", borderRadius: 6,
+                        border: chartType === o.key ? "2px solid #2A2621" : "1px solid #C9C0A6",
+                        background: chartType === o.key ? "#2A2621" : "#F6F1E1",
+                        color: chartType === o.key ? "#EFE9D8" : "#6E6656", fontSize: 11, fontWeight: 700, cursor: "pointer",
+                      }}>{o.label}</button>
+                    ))}
+                  </div>
+                </div>
+                <div style={{ background: "#F6F1E1", borderRadius: 8, padding: 14, marginBottom: 16 }}>
+                  {chartType === "bar" ? <BarChartCustom data={chartData} /> : <PieChartCustom data={pieData} />}
+                </div>
+
+                <SectionLabel>Tabela de partidas</SectionLabel>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {[...filteredMatches].reverse().map((m) => (
+                    <div key={m.id} style={{ background: "#F6F1E1", borderRadius: 8, padding: "10px 12px", borderLeft: `4px solid ${m.tipo === "torneio" ? "#B15C3E" : "#5C7A5E"}` }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", minWidth: 30, height: 22, padding: "0 4px", borderRadius: 4, background: m.resultado === "vitoria" ? "#4B6B4E" : "#8A3F35", color: "#EFE9D8", fontSize: 11, fontWeight: 700 }}>{m.score}</span>
+                          <span style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 15 }}>{m.meuDeck} vs {m.oponenteDeck}</span>
+                        </div>
+                        <span style={{ fontSize: 11, color: "#8A8270" }}>{m.data}</span>
+                      </div>
+                      {m.formato && (
+                        <div style={{ display: "inline-block", fontSize: 10, letterSpacing: 0.5, textTransform: "uppercase", color: "#8A8270", background: "#EFE9D8", borderRadius: 4, padding: "2px 6px", marginTop: 6 }}>
+                          {m.formato}
+                        </div>
+                      )}
+                      <div style={{ display: "flex", gap: 8, marginTop: 6, flexWrap: "wrap" }}>
+                        {m.games.map((g, i) => (
+                          <span key={i} style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, background: "#EFE9D8", borderRadius: 4, padding: "3px 7px" }}>
+                            <span style={{ width: 16, height: 16, borderRadius: 3, display: "inline-flex", alignItems: "center", justifyContent: "center", background: g.resultado === "vitoria" ? "#4B6B4E" : "#8A3F35", color: "#EFE9D8", fontWeight: 700, fontSize: 10 }}>
+                              {g.resultado === "vitoria" ? "V" : "D"}
+                            </span>
+                            J{i + 1}{g.mulligan > 0 ? ` · Mull ${g.mulligan}` : ""}
+                          </span>
+                        ))}
+                      </div>
+                      <div style={{ fontSize: 12, color: "#6E6656", marginTop: 6 }}>
+                        {m.tipo === "torneio" ? `${m.local || "Torneio"}${m.rodada ? ` · R${m.rodada}` : ""}` : m.local ? m.local : "Treino"}
+                      </div>
+                      {m.nota && <div style={{ fontSize: 13, color: "#4A4436", marginTop: 6, fontStyle: "italic" }}>"{m.nota}"</div>}
+                      <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                        <button onClick={() => startEdit(m)} style={{ flex: 1, padding: "8px 0", borderRadius: 6, border: "1px solid #C9C0A6", background: "#EFE9D8", color: "#2A2621", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Editar</button>
+                        {confirmDeleteId === m.id ? (
+                          <>
+                            <button onClick={() => handleDelete(m.id)} style={{ flex: 1, padding: "8px 0", borderRadius: 6, border: "none", background: "#8A3F35", color: "#EFE9D8", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Confirmar exclusão</button>
+                            <button onClick={() => setConfirmDeleteId(null)} style={{ flex: 1, padding: "8px 0", borderRadius: 6, border: "1px solid #C9C0A6", background: "#EFE9D8", color: "#6E6656", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Cancelar</button>
+                          </>
+                        ) : (
+                          <button onClick={() => setConfirmDeleteId(m.id)} style={{ flex: 1, padding: "8px 0", borderRadius: 6, border: "1px solid #C9C0A6", background: "#EFE9D8", color: "#8A3F35", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Excluir</button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
+        {!loading && screen === "decks" && (
+          <div>
+            <Field label="Formato do deck">
+              {data.formatos.length === 0 ? (
+                <div style={{ fontSize: 13, color: "#8A3F35" }}>Cadastra um formato na aba "Formatos" primeiro.</div>
+              ) : (
+                <select value={newDeckFormato} onChange={(e) => setNewDeckFormato(e.target.value)} style={inputStyle}>
+                  <option value="">Selecione um formato</option>
+                  {data.formatos.map((f) => <option key={f} value={f}>{f}</option>)}
+                </select>
+              )}
+            </Field>
+            <div style={{ height: 10 }} />
+            <Field label="Adicionar deck">
+              <div style={{ display: "flex", gap: 8 }}>
+                <input value={newDeckName} onChange={(e) => setNewDeckName(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") handleAddDeck(); }}
+                  placeholder="Ex: Boros Aggro" style={{ ...inputStyle, flex: 1 }} />
+                <button onClick={handleAddDeck} style={{ padding: "0 18px", borderRadius: 6, border: "none", background: "#2A2621", color: "#EFE9D8", fontWeight: 700, fontSize: 14, cursor: "pointer" }}>Adicionar</button>
+              </div>
+            </Field>
+            {deckError && <div style={{ color: "#8A3F35", fontSize: 13, marginTop: 8 }}>{deckError}</div>}
+            <div style={{ marginTop: 16 }}>
+              <SectionLabel>Decks cadastrados ({data.decks.length})</SectionLabel>
+              {data.decks.length === 0 ? (
+                <div style={{ color: "#6E6656", fontSize: 14, padding: "20px 0", textAlign: "center" }}>Nenhum deck cadastrado ainda.</div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {data.decks.map((d, i) => (
+                    <div key={d.name + d.formato + i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "#F6F1E1", borderRadius: 8, padding: "10px 14px" }}>
+                      <div>
+                        <span style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 15 }}>{d.name}</span>
+                        {d.formato && <div style={{ fontSize: 10, letterSpacing: 0.5, textTransform: "uppercase", color: "#8A8270" }}>{d.formato}</div>}
+                      </div>
+                      <button onClick={() => handleRemoveDeck(d.name, d.formato)} style={{ border: "1px solid #C9C0A6", background: "transparent", color: "#8A3F35", borderRadius: 6, padding: "6px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Remover</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {!loading && screen === "formatos" && (
+          <div>
+            <Field label="Adicionar formato">
+              <div style={{ display: "flex", gap: 8 }}>
+                <input value={newFormatoName} onChange={(e) => setNewFormatoName(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") handleAddFormato(); }}
+                  placeholder="Ex: Duel Commander" style={{ ...inputStyle, flex: 1 }} />
+                <button onClick={handleAddFormato} style={{ padding: "0 18px", borderRadius: 6, border: "none", background: "#2A2621", color: "#EFE9D8", fontWeight: 700, fontSize: 14, cursor: "pointer" }}>Adicionar</button>
+              </div>
+            </Field>
+            {formatoError && <div style={{ color: "#8A3F35", fontSize: 13, marginTop: 8 }}>{formatoError}</div>}
+            <div style={{ marginTop: 16 }}>
+              <SectionLabel>Formatos cadastrados ({data.formatos.length})</SectionLabel>
+              {data.formatos.length === 0 ? (
+                <div style={{ color: "#6E6656", fontSize: 14, padding: "20px 0", textAlign: "center" }}>Nenhum formato cadastrado ainda.</div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {data.formatos.map((f) => (
+                    <div key={f} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "#F6F1E1", borderRadius: 8, padding: "10px 14px" }}>
+                      <span style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 15 }}>{f}</span>
+                      <button onClick={() => handleRemoveFormato(f)} style={{ border: "1px solid #C9C0A6", background: "transparent", color: "#8A3F35", borderRadius: 6, padding: "6px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Remover</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ---------- Small components ----------
+function GameRow({ label, game, onChange }) {
+  return (
+    <div style={{ background: "#F6F1E1", borderRadius: 8, padding: "10px 12px" }}>
+      <div style={{ fontSize: 12, letterSpacing: 0.6, textTransform: "uppercase", color: "#6E6656", marginBottom: 8 }}>{label}</div>
+      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <div style={{ display: "flex", gap: 6 }}>
+          <button onClick={() => onChange({ resultado: "vitoria" })} style={{
+            width: 40, height: 36, borderRadius: 6,
+            border: game.resultado === "vitoria" ? "2px solid #2A2621" : "1px solid #C9C0A6",
+            background: game.resultado === "vitoria" ? "#4B6B4E" : "#EFE9D8",
+            color: game.resultado === "vitoria" ? "#EFE9D8" : "#4B6B4E", fontWeight: 700, fontSize: 15, cursor: "pointer",
+          }}>V</button>
+          <button onClick={() => onChange({ resultado: "derrota" })} style={{
+            width: 40, height: 36, borderRadius: 6,
+            border: game.resultado === "derrota" ? "2px solid #2A2621" : "1px solid #C9C0A6",
+            background: game.resultado === "derrota" ? "#8A3F35" : "#EFE9D8",
+            color: game.resultado === "derrota" ? "#EFE9D8" : "#8A3F35", fontWeight: 700, fontSize: 15, cursor: "pointer",
+          }}>D</button>
+        </div>
+        <div style={{ width: 1, height: 28, background: "#C9C0A6", margin: "0 4px" }} />
+        <div style={{ display: "flex", gap: 4, alignItems: "center", flex: 1 }}>
+          <span style={{ fontSize: 11, color: "#8A8270", marginRight: 2 }}>Mull</span>
+          {[0, 1, 2, 3].map((n) => (
+            <button key={n} onClick={() => onChange({ mulligan: n })} style={{
+              width: 30, height: 30, borderRadius: 6,
+              border: game.mulligan === n ? "2px solid #2A2621" : "1px solid #C9C0A6",
+              background: game.mulligan === n ? "#2A2621" : "#EFE9D8",
+              color: game.mulligan === n ? "#EFE9D8" : "#2A2621", fontWeight: 700, fontSize: 12, cursor: "pointer",
+            }}>{n === 3 ? "3+" : n}</button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+function Field({ label, children }) {
+  return <div><div style={{ fontSize: 12, letterSpacing: 0.6, textTransform: "uppercase", color: "#6E6656", marginBottom: 6 }}>{label}</div>{children}</div>;
+}
+function SectionLabel({ children }) {
+  return <div style={{ fontSize: 12, letterSpacing: 1, textTransform: "uppercase", color: "#6E6656", marginBottom: 8 }}>{children}</div>;
+}
+function Insight({ tone, text }) {
+  const bg = tone === "good" ? "#E4EDE3" : "#F2E1DC";
+  const bar = tone === "good" ? "#4B6B4E" : "#8A3F35";
+  return <div style={{ background: bg, borderLeft: `4px solid ${bar}`, borderRadius: 6, padding: "10px 12px", fontSize: 13, color: "#2A2621" }}>{text}</div>;
+}
+function BarChartCustom({ data }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      {data.map((d, i) => (
+        <div key={i}>
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 4 }}>
+            <span>{d.name}</span>
+            <span style={{ fontWeight: 700 }}>{d.winRate}% ({d.total})</span>
+          </div>
+          <div style={{ background: "#E4DBC0", borderRadius: 4, height: 14, overflow: "hidden" }}>
+            <div style={{ width: d.winRate + "%", height: "100%", background: barColor(d.winRate), borderRadius: 4 }} />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+function PieChartCustom({ data }) {
+  let cumulative = 0;
+  const stops = data.map((d) => {
+    const start = cumulative;
+    cumulative += d.percent;
+    return `${barColor(d.winRate)} ${start}% ${cumulative}%`;
+  }).join(", ");
+  const gradient = data.length ? `conic-gradient(${stops})` : "#E4DBC0";
+  return (
+    <div style={{ display: "flex", gap: 18, alignItems: "center", flexWrap: "wrap" }}>
+      <div style={{ width: 150, height: 150, borderRadius: "50%", background: gradient, flexShrink: 0 }} />
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {data.map((d, i) => (
+          <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
+            <span style={{ width: 10, height: 10, borderRadius: 2, background: barColor(d.winRate), flexShrink: 0 }} />
+            <span><strong>{d.name}</strong> · {d.percent}% das partidas · {d.winRate}% win rate</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+const inputStyle = {
+  width: "100%", padding: "10px 12px", borderRadius: 6, border: "1px solid #C9C0A6",
+  background: "#F6F1E1", fontSize: 14, color: "#2A2621", boxSizing: "border-box",
+};
+
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(<App />);
+</script>
+</body>
+</html>
