@@ -117,6 +117,9 @@ function barColor(wr) {
 
 // ---------- Firestore data layer ----------
 // Catálogo compartilhado: formatos e decks, visível e editável por qualquer usuário logado
+// Formatos jogados pelo time — lista fixa, só editável aqui no código
+const FORMATOS = ["Pauper", "Duel Commander"];
+
 const DEFAULT_PAUPER_DECKS = [
   "Mono Red Madness", "Grixis Affinity", "Blue Terror", "Jund Wildfire", "Snacker Gates",
   "Monsters Tron", "Altar Tron", "Mono Red Rally", "Elves", "Dimir Faeries",
@@ -127,15 +130,14 @@ const DEFAULT_PAUPER_DECKS = [
   "Izzet Terror", "Ephemerate Tron", "Boros Bully", "Cycle Storm",
 ];
 
-async function seedPauperDecksIfNeeded(catalog) {
-  const hasPauperFormat = catalog.formatos.includes("Pauper");
-  const hasPauperDecks = catalog.decks.some((d) => d.formato === "Pauper");
-  if (!hasPauperFormat || hasPauperDecks) return;
+async function seedPauperDecksIfNeeded(decks) {
+  const hasPauperDecks = decks.some((d) => d.formato === "Pauper");
+  if (hasPauperDecks) return;
   const { db, doc, setDoc } = window.__fb;
   const ref = doc(db, "shared", "catalog");
-  const newDecks = [...catalog.decks, ...DEFAULT_PAUPER_DECKS.map((name) => ({ name, formato: "Pauper" }))];
+  const newDecks = [...decks, ...DEFAULT_PAUPER_DECKS.map((name) => ({ name, formato: "Pauper" }))];
   try {
-    await setDoc(ref, { formatos: catalog.formatos, decks: newDecks });
+    await setDoc(ref, { decks: newDecks });
   } catch (e) {
     console.error("Erro ao popular decks padrão do Pauper:", e);
   }
@@ -149,18 +151,18 @@ function subscribeSharedCatalog(callback) {
       const d = snap.data();
       const decksRaw = d.decks || [];
       const decks = decksRaw.map((dk) => (typeof dk === "string" ? { name: dk, formato: "" } : dk));
-      callback({ formatos: d.formatos || [], decks });
+      callback(decks);
     } else {
-      callback({ formatos: [], decks: [] });
+      callback([]);
     }
   }, (err) => {
     console.error("Erro ao sincronizar catálogo compartilhado:", err);
   });
 }
-async function saveSharedCatalog(catalog) {
+async function saveSharedDecks(decks) {
   const { db, doc, setDoc } = window.__fb;
   const ref = doc(db, "shared", "catalog");
-  await setDoc(ref, catalog);
+  await setDoc(ref, { decks });
 }
 
 // Jogadores: perfil compartilhável com toggle de visibilidade
@@ -298,7 +300,7 @@ function App() {
 // ---------- Main app ----------
 function PauperTracker({ user, onSignOut }) {
   const [screen, setScreen] = useState("registrar");
-  const [data, setData] = useState({ formatos: [], decks: [], matches: [] });
+  const [data, setData] = useState({ decks: [], matches: [] });
   const [loading, setLoading] = useState(true);
   const [form, setForm] = useState(emptyForm());
   const [saving, setSaving] = useState(false);
@@ -311,8 +313,6 @@ function PauperTracker({ user, onSignOut }) {
   const [deckFormatoFilter, setDeckFormatoFilter] = useState("");
   const [deckError, setDeckError] = useState("");
   const [ownedDecks, setOwnedDecks] = useState([]);
-  const [newFormatoName, setNewFormatoName] = useState("");
-  const [formatoError, setFormatoError] = useState("");
   const [editingId, setEditingId] = useState(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
   const [chartType, setChartType] = useState("bar");
@@ -325,8 +325,8 @@ function PauperTracker({ user, onSignOut }) {
     let catalogLoaded = false;
     const checkDone = () => { if (matchesLoaded && catalogLoaded) setLoading(false); };
 
-    const unsubscribe = subscribeSharedCatalog((catalog) => {
-      setData((prev) => ({ ...prev, formatos: catalog.formatos, decks: catalog.decks }));
+    const unsubscribe = subscribeSharedCatalog((decks) => {
+      setData((prev) => ({ ...prev, decks }));
       catalogLoaded = true;
       checkDone();
     });
@@ -373,12 +373,12 @@ function PauperTracker({ user, onSignOut }) {
 
   useEffect(() => {
     if (loading) return;
-    seedPauperDecksIfNeeded({ formatos: data.formatos, decks: data.decks });
-  }, [loading, data.formatos, data.decks]);
+    seedPauperDecksIfNeeded(data.decks);
+  }, [loading, data.decks]);
 
-  async function persistCatalog(nextCatalog) {
+  async function persistDecks(nextDecks) {
     try {
-      await saveSharedCatalog(nextCatalog);
+      await saveSharedDecks(nextDecks);
       return true;
     } catch (e) {
       setError("Não consegui salvar no catálogo compartilhado: " + (e && e.message ? e.message : "erro desconhecido"));
@@ -409,26 +409,16 @@ function PauperTracker({ user, onSignOut }) {
     setForm((f) => (f.games.length < 3 ? { ...f, games: [...f.games, emptyGame()] } : f));
   }
 
-  async function handleAddFormato() {
-    const name = newFormatoName.trim();
-    if (!name) { setFormatoError("Digita um nome pro formato."); return; }
-    if (data.formatos.some((f) => f.toLowerCase() === name.toLowerCase())) { setFormatoError("Esse formato já está cadastrado."); return; }
-    setFormatoError("");
-    const nextCatalog = { formatos: [...data.formatos, name], decks: data.decks };
-    setData((prev) => ({ ...prev, formatos: nextCatalog.formatos }));
-    setNewFormatoName("");
-    await persistCatalog(nextCatalog);
-  }
   async function handleAddDeck() {
     const name = newDeckName.trim();
     if (!name) { setDeckError("Digita um nome pro deck."); return; }
     if (!deckFormatoFilter) { setDeckError("Escolhe o formato primeiro."); return; }
     if (data.decks.some((d) => d.name.toLowerCase() === name.toLowerCase() && d.formato === deckFormatoFilter)) { setDeckError("Esse deck já está cadastrado nesse formato."); return; }
     setDeckError("");
-    const nextCatalog = { formatos: data.formatos, decks: [...data.decks, { name, formato: deckFormatoFilter }] };
-    setData((prev) => ({ ...prev, decks: nextCatalog.decks }));
+    const nextDecks = [...data.decks, { name, formato: deckFormatoFilter }];
+    setData((prev) => ({ ...prev, decks: nextDecks }));
     setNewDeckName("");
-    await persistCatalog(nextCatalog);
+    await persistDecks(nextDecks);
   }
 
   async function toggleOwnedDeck(formato, name) {
@@ -596,7 +586,7 @@ function PauperTracker({ user, onSignOut }) {
       </div>
 
       <div className="tab-bar">
-        {[{ key: "registrar", label: "Registrar" }, { key: "estatisticas", label: "Estatísticas" }, { key: "decks", label: "Decks" }, { key: "formatos", label: "Formatos" }, { key: "jogadores", label: "Jogadores" }].map((t) => (
+        {[{ key: "registrar", label: "Registrar" }, { key: "estatisticas", label: "Estatísticas" }, { key: "decks", label: "Decks" }, { key: "jogadores", label: "Jogadores" }].map((t) => (
           <button key={t.key} className="tab-btn" onClick={() => setScreen(t.key)} style={{
             background: screen === t.key ? "#F6F1E1" : "transparent",
             borderBottom: screen === t.key ? "3px solid #B15C3E" : "3px solid transparent",
@@ -620,14 +610,10 @@ function PauperTracker({ user, onSignOut }) {
             )}
 
             <Field label="Formato">
-              {data.formatos.length === 0 ? (
-                <div style={{ fontSize: 13, color: "#8A3F35" }}>Nenhum formato cadastrado. Vai na aba "Formatos" primeiro.</div>
-              ) : (
-                <select value={form.formato} onChange={(e) => setForm((f) => ({ ...f, formato: e.target.value, meuDeck: "", oponenteDeck: "" }))} style={inputStyle}>
-                  <option value="">Selecione um formato</option>
-                  {data.formatos.map((f) => <option key={f} value={f}>{f}</option>)}
-                </select>
-              )}
+              <select value={form.formato} onChange={(e) => setForm((f) => ({ ...f, formato: e.target.value, meuDeck: "", oponenteDeck: "" }))} style={inputStyle}>
+                <option value="">Selecione um formato</option>
+                {FORMATOS.map((f) => <option key={f} value={f}>{f}</option>)}
+              </select>
             </Field>
 
             <Field label="Meu deck">
@@ -719,7 +705,7 @@ function PauperTracker({ user, onSignOut }) {
                 <Field label="Filtrar por formato">
                   <select value={statsFormato} onChange={(e) => { setStatsFormato(e.target.value); setStatsDeck("__all__"); }} style={inputStyle}>
                     <option value="__all__">Todos os formatos</option>
-                    {data.formatos.map((f) => <option key={f} value={f}>{f}</option>)}
+                    {FORMATOS.map((f) => <option key={f} value={f}>{f}</option>)}
                   </select>
                 </Field>
 
@@ -832,14 +818,10 @@ function PauperTracker({ user, onSignOut }) {
             </div>
 
             <Field label="Formato">
-              {data.formatos.length === 0 ? (
-                <div style={{ fontSize: 13, color: "#8A3F35" }}>Cadastra um formato na aba "Formatos" primeiro.</div>
-              ) : (
-                <select value={deckFormatoFilter} onChange={(e) => setDeckFormatoFilter(e.target.value)} style={inputStyle}>
-                  <option value="">Selecione um formato</option>
-                  {data.formatos.map((f) => <option key={f} value={f}>{f}</option>)}
-                </select>
-              )}
+              <select value={deckFormatoFilter} onChange={(e) => setDeckFormatoFilter(e.target.value)} style={inputStyle}>
+                <option value="">Selecione um formato</option>
+                {FORMATOS.map((f) => <option key={f} value={f}>{f}</option>)}
+              </select>
             </Field>
 
             {deckFormatoFilter && (
@@ -887,37 +869,6 @@ function PauperTracker({ user, onSignOut }) {
           </div>
         )}
 
-        {!loading && screen === "formatos" && (
-          <div>
-            <div style={{ background: "#EFE0C9", borderLeft: "4px solid #B15C3E", borderRadius: 6, padding: "10px 12px", fontSize: 13, marginBottom: 16 }}>
-              Aqui você adiciona os formatos que joga (ex: Pauper, Duel Commander). Vale pro time todo — quem cadastrar, todo mundo já vê.
-            </div>
-            <Field label="Adicionar formato">
-              <div style={{ display: "flex", gap: 8 }}>
-                <input value={newFormatoName} onChange={(e) => setNewFormatoName(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === "Enter") handleAddFormato(); }}
-                  placeholder="Ex: Duel Commander" style={{ ...inputStyle, flex: 1 }} />
-                <button onClick={handleAddFormato} style={{ padding: "0 18px", borderRadius: 6, border: "none", background: "#2A2621", color: "#EFE9D8", fontWeight: 700, fontSize: 14, cursor: "pointer" }}>Adicionar</button>
-              </div>
-            </Field>
-            {formatoError && <div style={{ color: "#8A3F35", fontSize: 13, marginTop: 8 }}>{formatoError}</div>}
-            <div style={{ marginTop: 16 }}>
-              <SectionLabel>Formatos cadastrados ({data.formatos.length})</SectionLabel>
-              {data.formatos.length === 0 ? (
-                <div style={{ color: "#6E6656", fontSize: 14, padding: "20px 0", textAlign: "center" }}>Nenhum formato cadastrado ainda.</div>
-              ) : (
-                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                  {data.formatos.map((f) => (
-                    <div key={f} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "#F6F1E1", borderRadius: 8, padding: "10px 14px" }}>
-                      <span style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 15 }}>{f}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
         {!loading && screen === "jogadores" && (
           <div>
             <div style={{ background: "#F6F1E1", borderRadius: 8, padding: "14px", marginBottom: 18, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
@@ -950,7 +901,7 @@ function PauperTracker({ user, onSignOut }) {
                 <Field label="Formato">
                   <select value={teamStatsFormato} onChange={(e) => setTeamStatsFormato(e.target.value)} style={inputStyle}>
                     <option value="__all__">Geral (todos os formatos)</option>
-                    {data.formatos.map((f) => <option key={f} value={f}>{f}</option>)}
+                    {FORMATOS.map((f) => <option key={f} value={f}>{f}</option>)}
                   </select>
                 </Field>
                 <div style={{ height: 12 }} />
