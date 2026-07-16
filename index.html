@@ -267,11 +267,80 @@ function LoginScreen({ onSignIn, errorMsg }) {
   );
 }
 
+function useInstallPrompt() {
+  const [deferredPrompt, setDeferredPrompt] = useState(null);
+  const [isStandalone, setIsStandalone] = useState(false);
+  const [isIOS, setIsIOS] = useState(false);
+  const [dismissed, setDismissed] = useState(false);
+
+  useEffect(() => {
+    const standalone = window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
+    setIsStandalone(standalone);
+    setIsIOS(/iphone|ipad|ipod/.test(window.navigator.userAgent.toLowerCase()));
+    try {
+      setDismissed(localStorage.getItem("installBannerDismissed") === "true");
+    } catch (e) {}
+
+    function handler(e) {
+      e.preventDefault();
+      setDeferredPrompt(e);
+    }
+    window.addEventListener("beforeinstallprompt", handler);
+    return () => window.removeEventListener("beforeinstallprompt", handler);
+  }, []);
+
+  function dismiss() {
+    setDismissed(true);
+    try { localStorage.setItem("installBannerDismissed", "true"); } catch (e) {}
+  }
+
+  async function install() {
+    if (!deferredPrompt) return;
+    deferredPrompt.prompt();
+    await deferredPrompt.userChoice;
+    setDeferredPrompt(null);
+  }
+
+  return {
+    showAndroidBanner: !!deferredPrompt && !isStandalone && !dismissed,
+    showIOSBanner: isIOS && !isStandalone && !dismissed,
+    install,
+    dismiss,
+  };
+}
+
+function InstallBanner({ variant, onInstall, onDismiss }) {
+  return (
+    <div style={{
+      background: "#0A3D91", color: "#FFC700", padding: "10px 14px",
+      display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
+      fontSize: 13, fontFamily: "'Roboto Condensed', sans-serif",
+    }}>
+      <div style={{ flex: 1 }}>
+        {variant === "android" ? (
+          <span><strong>Instale o Playbook</strong> no seu celular pra abrir como app.</span>
+        ) : (
+          <span><strong>Instale o Playbook:</strong> toque em compartilhar (□↑) e depois em "Adicionar à Tela de Início".</span>
+        )}
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+        {variant === "android" && (
+          <button onClick={onInstall} style={{ background: "#FFC700", color: "#0A3D91", border: "none", borderRadius: 6, padding: "6px 12px", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
+            Instalar
+          </button>
+        )}
+        <button onClick={onDismiss} style={{ background: "transparent", color: "#FFC700", border: "none", fontSize: 16, cursor: "pointer", padding: "0 4px" }}>×</button>
+      </div>
+    </div>
+  );
+}
+
 function App() {
   const fbReady = useFirebaseReady();
   const [user, setUser] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [authError, setAuthError] = useState("");
+  const installPrompt = useInstallPrompt();
 
   useEffect(() => {
     if (!fbReady) return;
@@ -295,13 +364,29 @@ function App() {
     await window.__fb.signOut(window.__fb.auth);
   }
 
+  const banner = installPrompt.showAndroidBanner ? (
+    <InstallBanner variant="android" onInstall={installPrompt.install} onDismiss={installPrompt.dismiss} />
+  ) : installPrompt.showIOSBanner ? (
+    <InstallBanner variant="ios" onDismiss={installPrompt.dismiss} />
+  ) : null;
+
   if (!fbReady || authLoading) {
     return <div style={{ padding: 24, color: "#6E6656" }}>Carregando…</div>;
   }
   if (!user) {
-    return <LoginScreen onSignIn={handleSignIn} errorMsg={authError} />;
+    return (
+      <>
+        {banner}
+        <LoginScreen onSignIn={handleSignIn} errorMsg={authError} />
+      </>
+    );
   }
-  return <PauperTracker user={user} onSignOut={handleSignOut} />;
+  return (
+    <>
+      {banner}
+      <PauperTracker user={user} onSignOut={handleSignOut} />
+    </>
+  );
 }
 
 // ---------- Main app ----------
