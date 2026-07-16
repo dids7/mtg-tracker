@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Livro de Partidas · Pauper</title>
+<title>Playbook · ZUBers</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Zilla+Slab:wght@500;700&family=Roboto+Condensed:wght@400;500;700&display=swap');
   * { box-sizing: border-box; }
@@ -211,8 +211,8 @@ function useFirebaseReady() {
 function LoginScreen({ onSignIn, errorMsg }) {
   return (
     <div className="app-shell" style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 24, textAlign: "center" }}>
-      <div style={{ fontSize: 11, letterSpacing: 2, textTransform: "uppercase", color: "#6E6656" }}>Multi-formato</div>
-      <h1 style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 28, margin: "6px 0 24px" }}>Livro de Partidas</h1>
+      <div style={{ fontSize: 11, letterSpacing: 2, textTransform: "uppercase", color: "#6E6656" }}>ZUBers</div>
+      <h1 style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 28, margin: "6px 0 24px" }}>Playbook</h1>
       <button
         onClick={onSignIn}
         style={{ padding: "14px 24px", borderRadius: 8, border: "none", background: "#2A2621", color: "#EFE9D8", fontWeight: 700, fontSize: 15, cursor: "pointer" }}
@@ -517,8 +517,8 @@ function PauperTracker({ user, onSignOut }) {
     <div className="app-shell">
       <div style={{ padding: "18px 16px 10px", borderBottom: "3px solid #2A2621", display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
         <div>
-          <div style={{ fontSize: 11, letterSpacing: 2, textTransform: "uppercase", color: "#6E6656" }}>Multi-formato</div>
-          <h1 style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 26, margin: "4px 0 0" }}>Livro de Partidas</h1>
+          <div style={{ fontSize: 11, letterSpacing: 2, textTransform: "uppercase", color: "#6E6656" }}>ZUBers</div>
+          <h1 style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 26, margin: "4px 0 0" }}>Playbook</h1>
         </div>
         <div style={{ textAlign: "right" }}>
           <div style={{ fontSize: 11, color: "#6E6656" }}>{user.displayName || user.email}</div>
