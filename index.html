@@ -20,17 +20,17 @@
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
-<!-- Firebase (modular SDK via CDN) -->
-<script type="module">
-  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-  import {
+<!-- Firebase (carregado via import dinâmico para não conflitar com o Babel) -->
+<script>
+(async () => {
+  const { initializeApp } = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js");
+  const {
     getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut
-  } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-  import {
+  } = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js");
+  const {
     getFirestore, doc, getDoc, setDoc
-  } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+  } = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js");
 
-  // >>> COLE AQUI O SEU firebaseConfig (Configurações do projeto > Geral > Seus apps) <<<
   const firebaseConfig = {
     apiKey: "AIzaSyCffhY0OX5gMnZBZ62GF07vSP8P1N7WemE",
     authDomain: "mtg-tracker-51f96.firebaseapp.com",
@@ -49,6 +49,7 @@
   };
   window.__fbReady = true;
   window.dispatchEvent(new Event("firebase-ready"));
+})();
 </script>
 
 <script type="text/babel" data-presets="react">
