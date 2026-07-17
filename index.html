@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Playbook · ZUBers</title>
+<title>Playbook · Estatísticas de Magic</title>
 <link rel="manifest" href="manifest.json" />
 <link rel="icon" href="icon-192-v2.png" type="image/png" />
 <link rel="apple-touch-icon" href="apple-touch-icon-v2.png" />
@@ -62,7 +62,7 @@
     getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut
   } = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js");
   const {
-    getFirestore, doc, getDoc, setDoc, onSnapshot, collection, query, where
+    getFirestore, doc, getDoc, setDoc, onSnapshot, collection, query, where, getDocs
   } = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js");
 
   const firebaseConfig = {
@@ -79,7 +79,7 @@
     auth: getAuth(app),
     provider: new GoogleAuthProvider(),
     db: getFirestore(app),
-    signInWithPopup, onAuthStateChanged, signOut, doc, getDoc, setDoc, onSnapshot, collection, query, where,
+    signInWithPopup, onAuthStateChanged, signOut, doc, getDoc, setDoc, onSnapshot, collection, query, where, getDocs,
   };
   window.__fbReady = true;
   window.dispatchEvent(new Event("firebase-ready"));
@@ -97,7 +97,7 @@ function todayISO() {
   return new Date().toISOString().slice(0, 10);
 }
 function emptyGame() {
-  return { resultado: null, mulligan: 0 };
+  return { resultado: null, mulligan: 0, playDraw: null };
 }
 function emptyForm() {
   return {
@@ -137,11 +137,48 @@ const DEFAULT_PAUPER_DECKS = [
   "Izzet Terror", "Ephemerate Tron", "Boros Bully", "Cycle Storm",
 ];
 
-async function seedPauperDecksIfNeeded(decks) {
+function generateInviteCode() {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // sem caracteres ambíguos (0/O, 1/I)
+  let code = "";
+  for (let i = 0; i < 6; i++) code += chars[Math.floor(Math.random() * chars.length)];
+  return code;
+}
+
+async function createTeam(uidStr, teamName) {
+  const { db, doc, collection, setDoc, getDoc } = window.__fb;
+  const inviteCode = generateInviteCode();
+  const teamRef = doc(collection(db, "teams"));
+  await setDoc(teamRef, { name: teamName, inviteCode, ownerUid: uidStr, createdAt: Date.now() });
+  await setDoc(doc(db, "users", uidStr), { teamId: teamRef.id }, { merge: true });
+  return { teamId: teamRef.id, inviteCode };
+}
+
+async function joinTeamByCode(uidStr, code) {
+  const { db, collection, query, where, getDocs, doc, setDoc } = window.__fb;
+  const normalized = code.trim().toUpperCase();
+  const q = query(collection(db, "teams"), where("inviteCode", "==", normalized));
+  const snap = await getDocs(q);
+  if (snap.empty) throw new Error("Código não encontrado. Confere se digitou certo.");
+  const teamDoc = snap.docs[0];
+  await setDoc(doc(db, "users", uidStr), { teamId: teamDoc.id }, { merge: true });
+  return { teamId: teamDoc.id, teamName: teamDoc.data().name, inviteCode: teamDoc.data().inviteCode };
+}
+
+async function loadUserTeam(uidStr) {
+  const { db, doc, getDoc } = window.__fb;
+  const userSnap = await getDoc(doc(db, "users", uidStr));
+  const teamId = userSnap.exists() ? userSnap.data().teamId : null;
+  if (!teamId) return null;
+  const teamSnap = await getDoc(doc(db, "teams", teamId));
+  if (!teamSnap.exists()) return null;
+  return { teamId, name: teamSnap.data().name, inviteCode: teamSnap.data().inviteCode };
+}
+
+async function seedPauperDecksIfNeeded(teamId, decks) {
   const hasPauperDecks = decks.some((d) => d.formato === "Pauper");
   if (hasPauperDecks) return;
   const { db, doc, setDoc } = window.__fb;
-  const ref = doc(db, "shared", "catalog");
+  const ref = doc(db, "teams", teamId, "data", "catalog");
   const newDecks = [...decks, ...DEFAULT_PAUPER_DECKS.map((name) => ({ name, formato: "Pauper" }))];
   try {
     await setDoc(ref, { decks: newDecks });
@@ -150,9 +187,9 @@ async function seedPauperDecksIfNeeded(decks) {
   }
 }
 
-function subscribeSharedCatalog(callback) {
+function subscribeSharedCatalog(teamId, callback) {
   const { db, doc, onSnapshot } = window.__fb;
-  const ref = doc(db, "shared", "catalog");
+  const ref = doc(db, "teams", teamId, "data", "catalog");
   return onSnapshot(ref, (snap) => {
     if (snap.exists()) {
       const d = snap.data();
@@ -166,28 +203,28 @@ function subscribeSharedCatalog(callback) {
     console.error("Erro ao sincronizar catálogo compartilhado:", err);
   });
 }
-async function saveSharedDecks(decks) {
+async function saveSharedDecks(teamId, decks) {
   const { db, doc, setDoc } = window.__fb;
-  const ref = doc(db, "shared", "catalog");
+  const ref = doc(db, "teams", teamId, "data", "catalog");
   await setDoc(ref, { decks });
 }
 
-// Jogadores: perfil compartilhável com toggle de visibilidade
-async function syncPlayerVisibility(uidStr, displayName, visible, matches) {
+// Jogadores: perfil compartilhável com toggle de visibilidade, isolado por time
+async function syncPlayerVisibility(teamId, uidStr, displayName, visible, matches) {
   const { db, doc, setDoc } = window.__fb;
-  const ref = doc(db, "players", uidStr);
+  const ref = doc(db, "teams", teamId, "players", uidStr);
   await setDoc(ref, { displayName, visible, matches });
 }
-async function loadOwnVisibility(uidStr) {
+async function loadOwnVisibility(teamId, uidStr) {
   const { db, doc, getDoc } = window.__fb;
-  const ref = doc(db, "players", uidStr);
+  const ref = doc(db, "teams", teamId, "players", uidStr);
   const snap = await getDoc(ref);
   if (snap.exists()) return !!snap.data().visible;
   return false;
 }
-function subscribeVisiblePlayers(myUid, callback) {
+function subscribeVisiblePlayers(teamId, myUid, callback) {
   const { db, collection, query, where, onSnapshot } = window.__fb;
-  const q = query(collection(db, "players"), where("visible", "==", true));
+  const q = query(collection(db, "teams", teamId, "players"), where("visible", "==", true));
   return onSnapshot(q, (snap) => {
     const list = [];
     snap.forEach((docSnap) => {
@@ -254,7 +291,7 @@ function useFirebaseReady() {
 function LoginScreen({ onSignIn, errorMsg }) {
   return (
     <div className="app-shell" style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 24, textAlign: "center" }}>
-      <div style={{ fontSize: 11, letterSpacing: 2, textTransform: "uppercase", color: "#6E6656" }}>ZUBers</div>
+      <div style={{ fontSize: 11, letterSpacing: 2, textTransform: "uppercase", color: "#6E6656" }}>Estatísticas de Magic</div>
       <h1 style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 28, margin: "6px 0 24px" }}>Playbook</h1>
       <button
         onClick={onSignIn}
@@ -340,6 +377,8 @@ function App() {
   const [user, setUser] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [authError, setAuthError] = useState("");
+  const [team, setTeam] = useState(null);
+  const [teamLoading, setTeamLoading] = useState(true);
   const installPrompt = useInstallPrompt();
 
   useEffect(() => {
@@ -351,6 +390,15 @@ function App() {
     });
     return unsub;
   }, [fbReady]);
+
+  useEffect(() => {
+    if (!user) { setTeamLoading(false); return; }
+    setTeamLoading(true);
+    loadUserTeam(user.uid)
+      .then((t) => setTeam(t))
+      .catch(() => setTeam(null))
+      .finally(() => setTeamLoading(false));
+  }, [user]);
 
   async function handleSignIn() {
     setAuthError("");
@@ -381,16 +429,116 @@ function App() {
       </>
     );
   }
+  if (teamLoading) {
+    return <div style={{ padding: 24, color: "#6E6656" }}>Carregando…</div>;
+  }
+  if (!team) {
+    return (
+      <>
+        {banner}
+        <TeamGate user={user} onSignOut={handleSignOut} onTeamReady={setTeam} />
+      </>
+    );
+  }
   return (
     <>
       {banner}
-      <PauperTracker user={user} onSignOut={handleSignOut} />
+      <PauperTracker user={user} team={team} onSignOut={handleSignOut} />
     </>
   );
 }
 
+function TeamGate({ user, onSignOut, onTeamReady }) {
+  const [mode, setMode] = useState("choose"); // choose | create | join
+  const [teamName, setTeamName] = useState("");
+  const [code, setCode] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  async function handleCreate() {
+    const name = teamName.trim();
+    if (!name) { setError("Digita um nome pro time."); return; }
+    setError("");
+    setLoading(true);
+    try {
+      const { teamId, inviteCode } = await createTeam(user.uid, name);
+      onTeamReady({ teamId, name, inviteCode });
+    } catch (e) {
+      setError("Não consegui criar o time: " + (e && e.message ? e.message : "erro"));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleJoin() {
+    if (!code.trim()) { setError("Digita o código do time."); return; }
+    setError("");
+    setLoading(true);
+    try {
+      const result = await joinTeamByCode(user.uid, code);
+      onTeamReady(result);
+    } catch (e) {
+      setError(e && e.message ? e.message : "Não consegui entrar no time.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="app-shell" style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 24, textAlign: "center", minHeight: "100vh" }}>
+      <div style={{ fontSize: 11, letterSpacing: 2, textTransform: "uppercase", color: "#6E6656" }}>Playbook</div>
+      <h1 style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 24, margin: "6px 0 24px" }}>Qual é o seu time?</h1>
+
+      {mode === "choose" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10, width: "100%", maxWidth: 300 }}>
+          <button onClick={() => setMode("create")} style={{ padding: "14px", borderRadius: 8, border: "none", background: "#2A2621", color: "#EFE9D8", fontWeight: 700, fontSize: 14, cursor: "pointer" }}>
+            Criar um time novo
+          </button>
+          <button onClick={() => setMode("join")} style={{ padding: "14px", borderRadius: 8, border: "1px solid #C9C0A6", background: "#F6F1E1", color: "#2A2621", fontWeight: 700, fontSize: 14, cursor: "pointer" }}>
+            Entrar com código de convite
+          </button>
+        </div>
+      )}
+
+      {mode === "create" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10, width: "100%", maxWidth: 300 }}>
+          <input
+            value={teamName}
+            onChange={(e) => setTeamName(e.target.value)}
+            placeholder="Nome do time (ex: ZUBers)"
+            style={{ padding: "12px 14px", borderRadius: 8, border: "1px solid #C9C0A6", background: "#F6F1E1", fontSize: 14 }}
+          />
+          <button onClick={handleCreate} disabled={loading} style={{ padding: "14px", borderRadius: 8, border: "none", background: "#2A2621", color: "#EFE9D8", fontWeight: 700, fontSize: 14, cursor: "pointer", opacity: loading ? 0.7 : 1 }}>
+            {loading ? "Criando…" : "Criar time"}
+          </button>
+          <button onClick={() => { setMode("choose"); setError(""); }} style={{ background: "transparent", border: "none", color: "#6E6656", fontSize: 13, cursor: "pointer" }}>‹ Voltar</button>
+        </div>
+      )}
+
+      {mode === "join" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10, width: "100%", maxWidth: 300 }}>
+          <input
+            value={code}
+            onChange={(e) => setCode(e.target.value)}
+            placeholder="Código do time (ex: AB3F9K)"
+            style={{ padding: "12px 14px", borderRadius: 8, border: "1px solid #C9C0A6", background: "#F6F1E1", fontSize: 14, textTransform: "uppercase" }}
+          />
+          <button onClick={handleJoin} disabled={loading} style={{ padding: "14px", borderRadius: 8, border: "none", background: "#2A2621", color: "#EFE9D8", fontWeight: 700, fontSize: 14, cursor: "pointer", opacity: loading ? 0.7 : 1 }}>
+            {loading ? "Entrando…" : "Entrar no time"}
+          </button>
+          <button onClick={() => { setMode("choose"); setError(""); }} style={{ background: "transparent", border: "none", color: "#6E6656", fontSize: 13, cursor: "pointer" }}>‹ Voltar</button>
+        </div>
+      )}
+
+      {error && <div style={{ color: "#8A3F35", fontSize: 13, marginTop: 14, maxWidth: 300 }}>{error}</div>}
+
+      <button onClick={onSignOut} style={{ marginTop: 24, background: "transparent", border: "none", color: "#8A3F35", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Sair</button>
+    </div>
+  );
+}
+
 // ---------- Main app ----------
-function PauperTracker({ user, onSignOut }) {
+function PauperTracker({ user, team, onSignOut }) {
   const [screen, setScreen] = useState("registrar");
   const [data, setData] = useState({ decks: [], matches: [] });
   const [loading, setLoading] = useState(true);
@@ -417,7 +565,7 @@ function PauperTracker({ user, onSignOut }) {
     let catalogLoaded = false;
     const checkDone = () => { if (matchesLoaded && catalogLoaded) setLoading(false); };
 
-    const unsubscribe = subscribeSharedCatalog((decks) => {
+    const unsubscribe = subscribeSharedCatalog(team.teamId, (decks) => {
       setData((prev) => ({ ...prev, decks }));
       catalogLoaded = true;
       checkDone();
@@ -442,13 +590,13 @@ function PauperTracker({ user, onSignOut }) {
   useEffect(() => {
     (async () => {
       try {
-        const v = await loadOwnVisibility(user.uid);
+        const v = await loadOwnVisibility(team.teamId, user.uid);
         setVisible(v);
       } catch (e) {
         // sem perfil ainda, mantém false
       }
     })();
-    const unsub = subscribeVisiblePlayers(user.uid, setTeamPlayers);
+    const unsub = subscribeVisiblePlayers(team.teamId, user.uid, setTeamPlayers);
     return () => unsub();
   }, [user.uid]);
 
@@ -456,7 +604,7 @@ function PauperTracker({ user, onSignOut }) {
     const next = !visible;
     setVisible(next);
     try {
-      await syncPlayerVisibility(user.uid, user.displayName || user.email, next, data.matches);
+      await syncPlayerVisibility(team.teamId, user.uid, user.displayName || user.email, next, data.matches);
     } catch (e) {
       setError("Não consegui atualizar a visibilidade: " + (e && e.message ? e.message : "erro"));
       setVisible(!next);
@@ -465,12 +613,12 @@ function PauperTracker({ user, onSignOut }) {
 
   useEffect(() => {
     if (loading) return;
-    seedPauperDecksIfNeeded(data.decks);
+    seedPauperDecksIfNeeded(team.teamId, data.decks);
   }, [loading, data.decks]);
 
   async function persistDecks(nextDecks) {
     try {
-      await saveSharedDecks(nextDecks);
+      await saveSharedDecks(team.teamId, nextDecks);
       return true;
     } catch (e) {
       setError("Não consegui salvar no catálogo compartilhado: " + (e && e.message ? e.message : "erro desconhecido"));
@@ -545,7 +693,7 @@ function PauperTracker({ user, onSignOut }) {
     setConfirmDeleteId(null);
     await persistMatches(nextMatches);
     if (visible) {
-      syncPlayerVisibility(user.uid, user.displayName || user.email, true, nextMatches).catch(() => {});
+      syncPlayerVisibility(team.teamId, user.uid, user.displayName || user.email, true, nextMatches).catch(() => {});
     }
   }
 
@@ -581,7 +729,7 @@ function PauperTracker({ user, onSignOut }) {
       const ok = await persistMatches(nextMatches);
       setData((prev) => ({ ...prev, matches: nextMatches }));
       if (visible) {
-        syncPlayerVisibility(user.uid, user.displayName || user.email, true, nextMatches).catch(() => {});
+        syncPlayerVisibility(team.teamId, user.uid, user.displayName || user.email, true, nextMatches).catch(() => {});
       }
       if (ok) {
         if (editingId) {
@@ -677,11 +825,12 @@ function PauperTracker({ user, onSignOut }) {
     <div className="app-shell">
       <div style={{ padding: "18px 16px 10px", borderBottom: "3px solid #2A2621", display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
         <div>
-          <div style={{ fontSize: 11, letterSpacing: 2, textTransform: "uppercase", color: "#6E6656" }}>ZUBers</div>
+          <div style={{ fontSize: 11, letterSpacing: 2, textTransform: "uppercase", color: "#6E6656" }}>{team.name}</div>
           <h1 style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 26, margin: "4px 0 0" }}>Playbook</h1>
         </div>
         <div style={{ textAlign: "right" }}>
           <div style={{ fontSize: 11, color: "#6E6656" }}>{user.displayName || user.email}</div>
+          <div style={{ fontSize: 10, color: "#8A8270", marginTop: 2 }}>Código: {team.inviteCode}</div>
           <button onClick={onSignOut} style={{ border: "none", background: "transparent", color: "#8A3F35", fontSize: 11, fontWeight: 700, cursor: "pointer", padding: 0, marginTop: 4 }}>
             Sair
           </button>
@@ -889,7 +1038,7 @@ function PauperTracker({ user, onSignOut }) {
                             <span style={{ width: 16, height: 16, borderRadius: 3, display: "inline-flex", alignItems: "center", justifyContent: "center", background: g.resultado === "vitoria" ? "#4B6B4E" : "#8A3F35", color: "#EFE9D8", fontWeight: 700, fontSize: 10 }}>
                               {g.resultado === "vitoria" ? "V" : "D"}
                             </span>
-                            J{i + 1}{g.mulligan > 0 ? ` · Mull ${g.mulligan}` : ""}
+                            J{i + 1}{g.playDraw ? ` · ${g.playDraw === "play" ? "Play" : "Draw"}` : ""}{g.mulligan > 0 ? ` · Mull ${g.mulligan}` : ""}
                           </span>
                         ))}
                       </div>
@@ -1231,6 +1380,21 @@ function GameRow({ label, game, onChange }) {
             }}>{n === 3 ? "3+" : n}</button>
           ))}
         </div>
+      </div>
+      <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 8 }}>
+        <span style={{ fontSize: 11, color: "#8A8270", marginRight: 2 }}>Ordem</span>
+        <button onClick={() => onChange({ playDraw: "play" })} style={{
+          padding: "6px 14px", borderRadius: 6,
+          border: game.playDraw === "play" ? "2px solid #2A2621" : "1px solid #C9C0A6",
+          background: game.playDraw === "play" ? "#2A2621" : "#EFE9D8",
+          color: game.playDraw === "play" ? "#EFE9D8" : "#2A2621", fontWeight: 700, fontSize: 12, cursor: "pointer",
+        }}>Play</button>
+        <button onClick={() => onChange({ playDraw: "draw" })} style={{
+          padding: "6px 14px", borderRadius: 6,
+          border: game.playDraw === "draw" ? "2px solid #2A2621" : "1px solid #C9C0A6",
+          background: game.playDraw === "draw" ? "#2A2621" : "#EFE9D8",
+          color: game.playDraw === "draw" ? "#EFE9D8" : "#2A2621", fontWeight: 700, fontSize: 12, cursor: "pointer",
+        }}>Draw</button>
       </div>
     </div>
   );
