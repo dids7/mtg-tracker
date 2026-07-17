@@ -1353,7 +1353,7 @@ function GameRow({ label, game, onChange }) {
   return (
     <div style={{ background: "#F6F1E1", borderRadius: 8, padding: "10px 12px" }}>
       <div style={{ fontSize: 12, letterSpacing: 0.6, textTransform: "uppercase", color: "#6E6656", marginBottom: 8 }}>{label}</div>
-      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
         <div style={{ display: "flex", gap: 6 }}>
           <button onClick={() => onChange({ resultado: "vitoria" })} style={{
             width: 40, height: 36, borderRadius: 6,
@@ -1369,7 +1369,7 @@ function GameRow({ label, game, onChange }) {
           }}>D</button>
         </div>
         <div style={{ width: 1, height: 28, background: "#C9C0A6", margin: "0 4px" }} />
-        <div style={{ display: "flex", gap: 4, alignItems: "center", flex: 1 }}>
+        <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
           <span style={{ fontSize: 11, color: "#8A8270", marginRight: 2 }}>Mull</span>
           {[0, 1, 2, 3].map((n) => (
             <button key={n} onClick={() => onChange({ mulligan: n })} style={{
@@ -1380,21 +1380,21 @@ function GameRow({ label, game, onChange }) {
             }}>{n === 3 ? "3+" : n}</button>
           ))}
         </div>
-      </div>
-      <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 8 }}>
-        <span style={{ fontSize: 11, color: "#8A8270", marginRight: 2 }}>Ordem</span>
-        <button onClick={() => onChange({ playDraw: "play" })} style={{
-          padding: "6px 14px", borderRadius: 6,
-          border: game.playDraw === "play" ? "2px solid #2A2621" : "1px solid #C9C0A6",
-          background: game.playDraw === "play" ? "#2A2621" : "#EFE9D8",
-          color: game.playDraw === "play" ? "#EFE9D8" : "#2A2621", fontWeight: 700, fontSize: 12, cursor: "pointer",
-        }}>Play</button>
-        <button onClick={() => onChange({ playDraw: "draw" })} style={{
-          padding: "6px 14px", borderRadius: 6,
-          border: game.playDraw === "draw" ? "2px solid #2A2621" : "1px solid #C9C0A6",
-          background: game.playDraw === "draw" ? "#2A2621" : "#EFE9D8",
-          color: game.playDraw === "draw" ? "#EFE9D8" : "#2A2621", fontWeight: 700, fontSize: 12, cursor: "pointer",
-        }}>Draw</button>
+        <div style={{ width: 1, height: 28, background: "#C9C0A6", margin: "0 4px" }} />
+        <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+          <button onClick={() => onChange({ playDraw: "play" })} style={{
+            padding: "0 10px", height: 30, borderRadius: 6,
+            border: game.playDraw === "play" ? "2px solid #2A2621" : "1px solid #C9C0A6",
+            background: game.playDraw === "play" ? "#2A2621" : "#EFE9D8",
+            color: game.playDraw === "play" ? "#EFE9D8" : "#2A2621", fontWeight: 700, fontSize: 11, cursor: "pointer",
+          }}>Play</button>
+          <button onClick={() => onChange({ playDraw: "draw" })} style={{
+            padding: "0 10px", height: 30, borderRadius: 6,
+            border: game.playDraw === "draw" ? "2px solid #2A2621" : "1px solid #C9C0A6",
+            background: game.playDraw === "draw" ? "#2A2621" : "#EFE9D8",
+            color: game.playDraw === "draw" ? "#EFE9D8" : "#2A2621", fontWeight: 700, fontSize: 11, cursor: "pointer",
+          }}>Draw</button>
+        </div>
       </div>
     </div>
   );
