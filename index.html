@@ -805,6 +805,18 @@ function PauperTracker({ user, team, onSignOut }) {
       .map(([opp, v]) => ({ opp, total: v.total, wins: v.wins, winRate: Math.round((v.wins / v.total) * 100) }))
       .sort((a, b) => b.total - a.total);
   }, [filteredMatches]);
+  const playDrawStats = useMemo(() => {
+    const allGames = filteredMatches.flatMap((m) => m.games || []);
+    const summarize = (games) => {
+      const total = games.length;
+      const wins = games.filter((g) => g.resultado === "vitoria").length;
+      return { total, wins, winRate: total ? Math.round((wins / total) * 100) : 0 };
+    };
+    return {
+      play: summarize(allGames.filter((g) => g.playDraw === "play")),
+      draw: summarize(allGames.filter((g) => g.playDraw === "draw")),
+    };
+  }, [filteredMatches]);
   const bestMatchup = matchupStats.filter((m) => m.total >= 2).sort((a, b) => b.winRate - a.winRate)[0];
   const worstMatchup = matchupStats.filter((m) => m.total >= 2).sort((a, b) => a.winRate - b.winRate)[0];
   const chartData = matchupStats.map((m) => ({ name: m.opp, winRate: m.winRate, total: m.total }));
@@ -1007,6 +1019,25 @@ function PauperTracker({ user, team, onSignOut }) {
                     <span style={{ fontSize: 13, color: "#C9C0A6" }}>{overall.wins}V / {overall.losses}D em {overall.total} partidas</span>
                   </div>
                 </div>
+
+                {(playDrawStats.play.total > 0 || playDrawStats.draw.total > 0) && (
+                  <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+                    <div style={{ flex: 1, background: "#F6F1E1", borderRadius: 8, padding: "12px 14px" }}>
+                      <div style={{ fontSize: 10, letterSpacing: 1, textTransform: "uppercase", color: "#6E6656" }}>Jogando 1º (Play)</div>
+                      <div style={{ display: "flex", alignItems: "baseline", gap: 6, marginTop: 4 }}>
+                        <span style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 22 }}>{playDrawStats.play.winRate}%</span>
+                        <span style={{ fontSize: 11, color: "#8A8270" }}>{playDrawStats.play.wins}/{playDrawStats.play.total}</span>
+                      </div>
+                    </div>
+                    <div style={{ flex: 1, background: "#F6F1E1", borderRadius: 8, padding: "12px 14px" }}>
+                      <div style={{ fontSize: 10, letterSpacing: 1, textTransform: "uppercase", color: "#6E6656" }}>Jogando 2º (Draw)</div>
+                      <div style={{ display: "flex", alignItems: "baseline", gap: 6, marginTop: 4 }}>
+                        <span style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 22 }}>{playDrawStats.draw.winRate}%</span>
+                        <span style={{ fontSize: 11, color: "#8A8270" }}>{playDrawStats.draw.wins}/{playDrawStats.draw.total}</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 {(bestMatchup || worstMatchup) && (
                   <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 }}>
