@@ -1407,18 +1407,19 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
   }, [adminOverall]);
 
   const adminTournamentsWithPlayer = useMemo(() => {
-    const list = [];
+    const grouped = {};
     adminFilteredByPlayer.forEach((p) => {
-      const seen = {};
+      const seenByPlayer = {};
       p.matches.filter((m) => m.tipo === "torneio").forEach((m) => {
-        const key = m.local + "|" + m.data;
-        if (!seen[key]) {
-          seen[key] = true;
-          list.push({ displayName: p.displayName, local: m.local, data: m.data, colocacao: m.colocacao });
-        }
+        const seenKey = m.local + "|" + m.data;
+        if (seenByPlayer[seenKey]) return;
+        seenByPlayer[seenKey] = true;
+        const groupKey = m.local + "|" + m.data;
+        if (!grouped[groupKey]) grouped[groupKey] = { local: m.local, data: m.data, players: [] };
+        grouped[groupKey].players.push({ displayName: p.displayName, colocacao: m.colocacao });
       });
     });
-    return list.sort((a, b) => b.data.localeCompare(a.data));
+    return Object.values(grouped).sort((a, b) => b.data.localeCompare(a.data));
   }, [adminFilteredByPlayer]);
 
   const adminReportText = useMemo(() => {
@@ -1436,7 +1437,8 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
     if (adminTournamentsWithPlayer.length > 0) {
       lines.push("🏆 TORNEIOS DO PERÍODO");
       adminTournamentsWithPlayer.forEach((t) => {
-        lines.push(`- ${t.local} (${t.data}): ${t.colocacao || "sem colocação registrada"} — ${t.displayName}`);
+        const jogadores = t.players.map((p) => `${p.displayName} (${p.colocacao || "sem colocação"})`).join(", ");
+        lines.push(`- ${t.local} (${t.data}): ${jogadores}`);
       });
       lines.push("");
     }
@@ -1531,12 +1533,12 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
               ) : deckOptionsForForm.length === 0 ? (
                 <div style={{ fontSize: 13, color: "#8A3F35" }}>Nenhum deck cadastrado nesse formato. Vai na aba "Decks".</div>
               ) : (
-                <select value={form.meuDeck} onChange={(e) => updateField("meuDeck", e.target.value)} style={inputStyle}>
-                  <option value="">Selecione um deck</option>
-                  {meuDeckOptions.map((d) => (
-                    <option key={d} value={d}>{ownedDecks.includes(deckKey(form.formato, d)) ? "★ " + d : d}</option>
-                  ))}
-                </select>
+                <DeckSearchSelect
+                  value={form.meuDeck}
+                  onChange={(name) => updateField("meuDeck", name)}
+                  options={meuDeckOptions.map((d) => ({ name: d, starred: ownedDecks.includes(deckKey(form.formato, d)) }))}
+                  placeholder="Ex: GRI para Grixis Affinity"
+                />
               )}
             </Field>
             <Field label="Deck do oponente">
@@ -1545,10 +1547,12 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
               ) : deckOptionsForForm.length === 0 ? (
                 <div style={{ fontSize: 13, color: "#8A3F35" }}>Cadastra os decks na aba "Decks" primeiro.</div>
               ) : (
-                <select value={form.oponenteDeck} onChange={(e) => updateField("oponenteDeck", e.target.value)} style={inputStyle}>
-                  <option value="">Selecione um deck</option>
-                  {oponenteDeckOptions.map((d) => <option key={d} value={d}>{d}</option>)}
-                </select>
+                <DeckSearchSelect
+                  value={form.oponenteDeck}
+                  onChange={(name) => updateField("oponenteDeck", name)}
+                  options={oponenteDeckOptions.map((d) => ({ name: d, starred: false }))}
+                  placeholder="Digite pra buscar..."
+                />
               )}
             </Field>
 
@@ -2467,11 +2471,15 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
                     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                       {adminTournamentsWithPlayer.map((t, i) => (
                         <div key={i} style={{ background: "#F6F1E1", borderRadius: 8, padding: "10px 14px" }}>
-                          <div style={{ display: "flex", justifyContent: "space-between" }}>
-                            <span>{t.local} · {t.data}</span>
-                            <strong>{t.colocacao || "—"}</strong>
+                          <div style={{ fontWeight: 700, marginBottom: 6 }}>{t.local} · {t.data}</div>
+                          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                            {t.players.map((p, j) => (
+                              <div key={j} style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
+                                <span style={{ color: "#6E6656" }}>{p.displayName}</span>
+                                <strong>{p.colocacao || "—"}</strong>
+                              </div>
+                            ))}
                           </div>
-                          <div style={{ fontSize: 11, color: "#8A8270", marginTop: 2 }}>{t.displayName}</div>
                         </div>
                       ))}
                     </div>
@@ -2507,6 +2515,72 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
 }
 
 // ---------- Small components ----------
+function DeckSearchSelect({ value, onChange, options, placeholder = "Digite pra buscar..." }) {
+  const [query, setQuery] = useState(value || "");
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef(null);
+
+  useEffect(() => { setQuery(value || ""); }, [value]);
+
+  useEffect(() => {
+    if (!open) return;
+    function handleClickOutside(e) {
+      if (wrapRef.current && !wrapRef.current.contains(e.target)) {
+        setOpen(false);
+        setQuery(value || "");
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [open, value]);
+
+  const filtered = options.filter((opt) => opt.name.toLowerCase().includes(query.toLowerCase()));
+
+  function selectOption(opt) {
+    onChange(opt.name);
+    setQuery(opt.name);
+    setOpen(false);
+  }
+
+  return (
+    <div ref={wrapRef} style={{ position: "relative" }}>
+      <input
+        value={query}
+        onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
+        onFocus={() => setOpen(true)}
+        placeholder={placeholder}
+        style={inputStyle}
+      />
+      {open && filtered.length > 0 && (
+        <div style={{
+          position: "absolute", zIndex: 60, top: "calc(100% + 4px)", left: 0, right: 0,
+          background: "#F6F1E1", border: "1px solid #C9C0A6", borderRadius: 8,
+          maxHeight: 220, overflowY: "auto", boxShadow: "0 6px 18px rgba(42,38,33,0.2)",
+        }}>
+          {filtered.map((opt) => (
+            <div
+              key={opt.name}
+              onMouseDown={() => selectOption(opt)}
+              style={{ padding: "10px 12px", cursor: "pointer", fontSize: 14, borderBottom: "1px solid #E4DBC0" }}
+            >
+              {opt.starred ? `★ ${opt.name}` : opt.name}
+            </div>
+          ))}
+        </div>
+      )}
+      {open && query && filtered.length === 0 && (
+        <div style={{
+          position: "absolute", zIndex: 60, top: "calc(100% + 4px)", left: 0, right: 0,
+          background: "#F6F1E1", border: "1px solid #C9C0A6", borderRadius: 8,
+          padding: "10px 12px", fontSize: 13, color: "#8A8270",
+        }}>
+          Nenhum deck encontrado
+        </div>
+      )}
+    </div>
+  );
+}
+
 function QtyPicker({ value, onChange, options = [1, 2, 3, 4], suffix = "x", placeholder = "—" }) {
   const [open, setOpen] = useState(false);
   const [coords, setCoords] = useState(null);
