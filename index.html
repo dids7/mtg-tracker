@@ -160,6 +160,7 @@ function resultColor(r) {
 // Catálogo compartilhado: formatos e decks, visível e editável por qualquer usuário logado
 // Formatos jogados pelo time — lista fixa, só editável aqui no código
 const FORMATOS = ["Pauper", "Duel Commander 500", "Duel Commander", "Premodern", "Legacy"];
+const CATEGORIAS = ["Aggro", "Control", "Midrange", "Tempo", "Combo"];
 // Formatos com sideboard tradicional (exclui Commander, que não tem G2/G3 com troca de cartas)
 const SIDEBOARD_FORMATOS = ["Pauper", "Premodern", "Legacy"];
 
@@ -891,6 +892,7 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
   const [statsDeck, setStatsDeck] = useState("__all__");
   const [statsTipo, setStatsTipo] = useState("todos"); // todos | treino | torneio
   const [newDeckName, setNewDeckName] = useState("");
+  const [newDeckCategoria, setNewDeckCategoria] = useState("");
   const [deckFormatoFilter, setDeckFormatoFilter] = useState("");
   const [deckError, setDeckError] = useState("");
   const [ownedDecks, setOwnedDecks] = useState([]);
@@ -914,6 +916,7 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
   const [adminLoading, setAdminLoading] = useState(false);
   const [adminError, setAdminError] = useState("");
   const [adminMonthFilter, setAdminMonthFilter] = useState("__all__");
+  const [adminFormatoFilter, setAdminFormatoFilter] = useState(FORMATOS[0]);
   const [adminCopied, setAdminCopied] = useState(false);
   const isTeamOwner = team && team.ownerUid === user.uid;
 
@@ -1023,9 +1026,18 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
     if (!deckFormatoFilter) { setDeckError("Escolhe o formato primeiro."); return; }
     if (data.decks.some((d) => d.name.toLowerCase() === name.toLowerCase() && d.formato === deckFormatoFilter)) { setDeckError("Esse deck já está cadastrado nesse formato."); return; }
     setDeckError("");
-    const nextDecks = [...data.decks, { name, formato: deckFormatoFilter }];
+    const nextDecks = [...data.decks, { name, formato: deckFormatoFilter, categoria: newDeckCategoria || "" }];
     setData((prev) => ({ ...prev, decks: nextDecks }));
     setNewDeckName("");
+    setNewDeckCategoria("");
+    await persistDecks(nextDecks);
+  }
+
+  async function cycleDeckCategoria(formato, name) {
+    const idx = CATEGORIAS.findIndex((c) => c === data.decks.find((d) => d.formato === formato && d.name === name)?.categoria);
+    const next = CATEGORIAS[(idx + 1) % (CATEGORIAS.length + 1)] || "";
+    const nextDecks = data.decks.map((d) => (d.formato === formato && d.name === name ? { ...d, categoria: next } : d));
+    setData((prev) => ({ ...prev, decks: nextDecks }));
     await persistDecks(nextDecks);
   }
 
@@ -1357,9 +1369,13 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
     return adminData.map((p) => ({
       uid: p.uid,
       displayName: p.displayName,
-      matches: adminMonthFilter === "__all__" ? p.matches : p.matches.filter((m) => monthKey(m.data) === adminMonthFilter),
+      matches: p.matches.filter((m) => {
+        if (adminFormatoFilter && m.formato !== adminFormatoFilter) return false;
+        if (adminMonthFilter !== "__all__" && monthKey(m.data) !== adminMonthFilter) return false;
+        return true;
+      }),
     }));
-  }, [adminData, adminMonthFilter]);
+  }, [adminData, adminMonthFilter, adminFormatoFilter]);
 
   const adminCombinedMatches = useMemo(() => adminFilteredByPlayer.flatMap((p) => p.matches), [adminFilteredByPlayer]);
 
@@ -1398,6 +1414,50 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
       .map(([deck, v]) => ({ deck, total: v.total, wins: v.wins, winRate: Math.round((v.wins / v.total) * 100) }))
       .sort((a, b) => wilsonScore(b.wins, b.total) - wilsonScore(a.wins, a.total));
   }, [adminCombinedMatches]);
+
+  const adminPlayDraw = useMemo(() => {
+    const allGames = adminCombinedMatches.flatMap((m) => m.games || []);
+    const summarize = (games) => {
+      const total = games.length;
+      const wins = games.filter((g) => g.resultado === "vitoria").length;
+      const losses = games.filter((g) => g.resultado === "derrota").length;
+      return { total, wins, losses, winRate: total ? Math.round((wins / total) * 100) : 0 };
+    };
+    return {
+      play: summarize(allGames.filter((g) => g.playDraw === "play")),
+      draw: summarize(allGames.filter((g) => g.playDraw === "draw")),
+    };
+  }, [adminCombinedMatches]);
+
+  const adminMulligan = useMemo(() => {
+    const allGames = adminCombinedMatches.flatMap((m) => m.games || []);
+    const summarize = (games) => {
+      const total = games.length;
+      const wins = games.filter((g) => g.resultado === "vitoria").length;
+      const losses = games.filter((g) => g.resultado === "derrota").length;
+      return { total, wins, losses, winRate: total ? Math.round((wins / total) * 100) : 0 };
+    };
+    return {
+      com: summarize(allGames.filter((g) => g.mulligan > 0)),
+      sem: summarize(allGames.filter((g) => g.mulligan === 0)),
+    };
+  }, [adminCombinedMatches]);
+
+  const adminByCategoria = useMemo(() => {
+    const deckCategoriaMap = {};
+    data.decks.forEach((d) => { deckCategoriaMap[d.formato + "||" + d.name] = d.categoria || ""; });
+    const byCategoria = {};
+    adminCombinedMatches.forEach((m) => {
+      const cat = deckCategoriaMap[m.formato + "||" + m.meuDeck] || "Sem categoria";
+      byCategoria[cat] = byCategoria[cat] || { total: 0, wins: 0, losses: 0 };
+      byCategoria[cat].total += 1;
+      if (m.resultado === "vitoria") byCategoria[cat].wins += 1;
+      else if (m.resultado === "derrota") byCategoria[cat].losses += 1;
+    });
+    return Object.entries(byCategoria)
+      .map(([categoria, v]) => ({ categoria, total: v.total, wins: v.wins, losses: v.losses, winRate: Math.round((v.wins / v.total) * 100) }))
+      .sort((a, b) => wilsonScore(b.wins, b.total) - wilsonScore(a.wins, a.total));
+  }, [adminCombinedMatches, data.decks]);
 
   const adminTeamBestMatchup = useMemo(() => {
     return [...adminOverall.chartData].filter((c) => c.total >= 2).sort((a, b) => b.winRate - a.winRate)[0] || null;
@@ -1909,17 +1969,22 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
               <>
                 <div style={{ height: 16 }} />
                 <Field label="Adicionar deck">
-                  <div style={{ display: "flex", gap: 8 }}>
+                  <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
                     <input value={newDeckName} onChange={(e) => setNewDeckName(e.target.value)}
                       onKeyDown={(e) => { if (e.key === "Enter") handleAddDeck(); }}
                       placeholder="Ex: Boros Aggro" style={{ ...inputStyle, flex: 1 }} />
                     <button onClick={handleAddDeck} style={{ padding: "0 18px", borderRadius: 6, border: "none", background: "#2A2621", color: "#EFE9D8", fontWeight: 700, fontSize: 14, cursor: "pointer" }}>Adicionar</button>
                   </div>
+                  <select value={newDeckCategoria} onChange={(e) => setNewDeckCategoria(e.target.value)} style={inputStyle}>
+                    <option value="">Categoria (opcional)</option>
+                    {CATEGORIAS.map((c) => <option key={c} value={c}>{c}</option>)}
+                  </select>
                 </Field>
                 {deckError && <div style={{ color: "#8A3F35", fontSize: 13, marginTop: 8 }}>{deckError}</div>}
 
                 <div style={{ marginTop: 16 }}>
                   <SectionLabel>Decks de {deckFormatoFilter} ({stableDeckOrder.length})</SectionLabel>
+                  <div style={{ fontSize: 11, color: "#8A8270", marginBottom: 10 }}>Toque na etiqueta de categoria pra trocar (Aggro → Control → Midrange → Tempo → Combo → sem categoria)</div>
                   {stableDeckOrder.length === 0 ? (
                     <div style={{ color: "#6E6656", fontSize: 14, padding: "20px 0", textAlign: "center" }}>Nenhum deck cadastrado nesse formato ainda.</div>
                   ) : (
@@ -1929,16 +1994,29 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
                         return (
                           <div
                             key={d.name}
-                            onClick={() => toggleOwnedDeckKeepScroll(d.formato, d.name)}
                             style={{
                               display: "flex", justifyContent: "space-between", alignItems: "center",
                               background: owned ? "#2A2621" : "#F6F1E1",
-                              borderRadius: 8, padding: "12px 14px", cursor: "pointer",
+                              borderRadius: 8, padding: "12px 14px",
                               border: owned ? "2px solid #B15C3E" : "1px solid transparent",
                             }}
                           >
-                            <span style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 15, color: owned ? "#EFE9D8" : "#2A2621" }}>{d.name}</span>
-                            {owned && <span style={{ fontSize: 11, fontWeight: 700, color: "#B15C3E" }}>✓ Meu deck</span>}
+                            <span onClick={() => toggleOwnedDeckKeepScroll(d.formato, d.name)} style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 15, color: owned ? "#EFE9D8" : "#2A2621", cursor: "pointer", flex: 1 }}>{d.name}</span>
+                            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                              <span
+                                onClick={(e) => { e.stopPropagation(); cycleDeckCategoria(d.formato, d.name); }}
+                                style={{
+                                  fontSize: 10, fontWeight: 700, textTransform: "uppercase", cursor: "pointer",
+                                  padding: "3px 8px", borderRadius: 4,
+                                  background: d.categoria ? "#B15C3E" : "transparent",
+                                  color: d.categoria ? "#EFE9D8" : (owned ? "#C9C0A6" : "#8A8270"),
+                                  border: d.categoria ? "none" : "1px dashed #8A8270",
+                                }}
+                              >
+                                {d.categoria || "+ categoria"}
+                              </span>
+                              {owned && <span style={{ fontSize: 11, fontWeight: 700, color: "#B15C3E" }}>✓</span>}
+                            </div>
                           </div>
                         );
                       })}
@@ -2387,6 +2465,12 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
 
             {!adminLoading && adminData && (
               <>
+                <Field label="Formato">
+                  <select value={adminFormatoFilter} onChange={(e) => setAdminFormatoFilter(e.target.value)} style={inputStyle}>
+                    {FORMATOS.map((f) => <option key={f} value={f}>{f}</option>)}
+                  </select>
+                </Field>
+                <div style={{ height: 10 }} />
                 <Field label="Período">
                   <select value={adminMonthFilter} onChange={(e) => setAdminMonthFilter(e.target.value)} style={inputStyle}>
                     <option value="__all__">Todo o tempo</option>
@@ -2458,6 +2542,62 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
                           </span>
                         </div>
                       ))}
+                    </div>
+                  </>
+                )}
+
+                {(adminPlayDraw.play.total > 0 || adminPlayDraw.draw.total > 0) && (
+                  <>
+                    <SectionLabel>Play vs Draw (time todo)</SectionLabel>
+                    <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
+                      <div style={{ flex: 1, background: "#F6F1E1", borderRadius: 8, padding: 14 }}>
+                        <div style={{ fontSize: 10, color: "#6E6656", textTransform: "uppercase" }}>Jogando 1º</div>
+                        <div style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 22, marginTop: 4 }}>{adminPlayDraw.play.winRate}%</div>
+                        <div style={{ fontSize: 11, color: "#8A8270" }}>{adminPlayDraw.play.wins}V/{adminPlayDraw.play.losses}D ({adminPlayDraw.play.total})</div>
+                      </div>
+                      <div style={{ flex: 1, background: "#F6F1E1", borderRadius: 8, padding: 14 }}>
+                        <div style={{ fontSize: 10, color: "#6E6656", textTransform: "uppercase" }}>Jogando 2º</div>
+                        <div style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 22, marginTop: 4 }}>{adminPlayDraw.draw.winRate}%</div>
+                        <div style={{ fontSize: 11, color: "#8A8270" }}>{adminPlayDraw.draw.wins}V/{adminPlayDraw.draw.losses}D ({adminPlayDraw.draw.total})</div>
+                      </div>
+                    </div>
+                  </>
+                )}
+
+                {(adminMulligan.com.total > 0 || adminMulligan.sem.total > 0) && (
+                  <>
+                    <SectionLabel>Mulligan (time todo)</SectionLabel>
+                    <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
+                      <div style={{ flex: 1, background: "#F6F1E1", borderRadius: 8, padding: 14 }}>
+                        <div style={{ fontSize: 10, color: "#6E6656", textTransform: "uppercase" }}>Com mulligan</div>
+                        <div style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 22, marginTop: 4 }}>{adminMulligan.com.winRate}%</div>
+                        <div style={{ fontSize: 11, color: "#8A8270" }}>{adminMulligan.com.wins}V/{adminMulligan.com.losses}D ({adminMulligan.com.total})</div>
+                      </div>
+                      <div style={{ flex: 1, background: "#F6F1E1", borderRadius: 8, padding: 14 }}>
+                        <div style={{ fontSize: 10, color: "#6E6656", textTransform: "uppercase" }}>Sem mulligan</div>
+                        <div style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 22, marginTop: 4 }}>{adminMulligan.sem.winRate}%</div>
+                        <div style={{ fontSize: 11, color: "#8A8270" }}>{adminMulligan.sem.wins}V/{adminMulligan.sem.losses}D ({adminMulligan.sem.total})</div>
+                      </div>
+                    </div>
+                  </>
+                )}
+
+                {adminByCategoria.length > 0 && (
+                  <>
+                    <SectionLabel>Por categoria de arquétipo</SectionLabel>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 20 }}>
+                      {adminByCategoria.map((c, i) => (
+                        <div key={i} style={{ background: "#F6F1E1", borderRadius: 8, padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                          <span>{c.categoria}</span>
+                          <span style={{ textAlign: "right" }}>
+                            <strong>{c.winRate}% ({c.wins}V/{c.losses}D)</strong>
+                            <div style={{ fontSize: 11, color: "#8A8270", fontWeight: 500 }}>conf: {Math.round(wilsonScore(c.wins, c.total) * 100)}%</div>
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                    <div style={{ fontSize: 11, color: "#8A8270", marginTop: -12, marginBottom: 20, fontStyle: "italic" }}>
+                      "Sem categoria" junta decks que ainda não foram classificados na aba Decks.
                     </div>
                   </>
                 )}
