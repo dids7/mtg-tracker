@@ -1358,7 +1358,7 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
         torneioStats: computeMatchStats(p.matches.filter((m) => m.tipo === "torneio")),
         treinoStats: computeMatchStats(p.matches.filter((m) => m.tipo === "treino")),
       }))
-      .sort((a, b) => b.stats.total - a.stats.total);
+      .sort((a, b) => wilsonScore(b.stats.wins, b.stats.total) - wilsonScore(a.stats.wins, a.stats.total));
   }, [adminFilteredByPlayer]);
 
   const adminPlayerOfMonth = useMemo(() => {
@@ -1381,7 +1381,7 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
     });
     return Object.entries(byDeck)
       .map(([deck, v]) => ({ deck, total: v.total, wins: v.wins, winRate: Math.round((v.wins / v.total) * 100) }))
-      .sort((a, b) => b.total - a.total);
+      .sort((a, b) => wilsonScore(b.wins, b.total) - wilsonScore(a.wins, a.total));
   }, [adminCombinedMatches]);
 
   const adminTeamBestMatchup = useMemo(() => {
@@ -2405,8 +2405,9 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
                     {adminByPlayer.map((p) => (
                       <div key={p.uid} style={{ background: "#F6F1E1", borderRadius: 8, padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                         <span style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 15 }}>{p.displayName}</span>
-                        <span style={{ fontWeight: 700, color: barColor(p.stats.winRate) }}>
+                        <span style={{ fontWeight: 700, color: barColor(p.stats.winRate), textAlign: "right" }}>
                           {p.stats.winRate}% <span style={{ fontWeight: 500, fontSize: 12, color: "#6E6656" }}>({p.stats.wins}V/{p.stats.losses}D)</span>
+                          <div style={{ fontWeight: 500, fontSize: 11, color: "#8A8270" }}>conf: {Math.round(wilsonScore(p.stats.wins, p.stats.total) * 100)}%</div>
                         </span>
                       </div>
                     ))}
@@ -2418,9 +2419,12 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
                     <SectionLabel>Por deck</SectionLabel>
                     <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 20 }}>
                       {adminByDeck.map((d, i) => (
-                        <div key={i} style={{ background: "#F6F1E1", borderRadius: 8, padding: "10px 14px", display: "flex", justifyContent: "space-between" }}>
+                        <div key={i} style={{ background: "#F6F1E1", borderRadius: 8, padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                           <span>{d.deck}</span>
-                          <strong>{d.winRate}% ({d.wins}/{d.total})</strong>
+                          <span style={{ textAlign: "right" }}>
+                            <strong>{d.winRate}% ({d.wins}/{d.total})</strong>
+                            <div style={{ fontSize: 11, color: "#8A8270", fontWeight: 500 }}>conf: {Math.round(wilsonScore(d.wins, d.total) * 100)}%</div>
+                          </span>
                         </div>
                       ))}
                     </div>
@@ -2768,7 +2772,12 @@ function BarChartCustom({ data }) {
         <div key={i}>
           <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 4 }}>
             <span>{d.name}</span>
-            <span style={{ fontWeight: 700 }}>{d.winRate}% ({d.total})</span>
+            <span style={{ fontWeight: 700 }}>
+              {d.winRate}% ({d.total})
+              {typeof d.wins === "number" && (
+                <span style={{ fontWeight: 500, color: "#8A8270", fontSize: 11 }}> · conf: {Math.round(wilsonScore(d.wins, d.total) * 100)}%</span>
+              )}
+            </span>
           </div>
           <div style={{ background: "#E4DBC0", borderRadius: 4, height: 14, overflow: "hidden" }}>
             <div style={{ width: d.winRate + "%", height: "100%", background: barColor(d.winRate), borderRadius: 4 }} />
