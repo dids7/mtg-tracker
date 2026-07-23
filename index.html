@@ -130,15 +130,30 @@ function matchOutcome(games) {
   const losses = played.filter((g) => g.resultado === "derrota").length;
   if (wins >= 2) return { outcome: "vitoria", score: `${wins}-${losses}` };
   if (losses >= 2) return { outcome: "derrota", score: `${wins}-${losses}` };
+  if (played.length === 3) return { outcome: "empate", score: `${wins}-${losses}` };
   return { outcome: null, score: `${wins}-${losses}` };
 }
 function needsGame3(games) {
-  return games[0].resultado && games[1].resultado && games[0].resultado !== games[1].resultado;
+  const g1 = games[0], g2 = games[1];
+  if (!g1.resultado || !g2.resultado) return false;
+  const wins = [g1, g2].filter((g) => g.resultado === "vitoria").length;
+  const losses = [g1, g2].filter((g) => g.resultado === "derrota").length;
+  return wins < 2 && losses < 2;
 }
 function barColor(wr) {
   if (wr >= 60) return "#4B6B4E";
   if (wr >= 40) return "#B08B3E";
   return "#8A3F35";
+}
+function resultLabel(r) {
+  if (r === "vitoria") return "V";
+  if (r === "derrota") return "D";
+  return "E";
+}
+function resultColor(r) {
+  if (r === "vitoria") return "#4B6B4E";
+  if (r === "derrota") return "#8A3F35";
+  return "#B08B3E";
 }
 
 // ---------- Firestore data layer ----------
@@ -1575,7 +1590,13 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
             {form.tipo === "torneio" && (
               <>
                 <Field label="Rodada">
-                  <input type="number" min="1" value={form.rodada} onChange={(e) => updateField("rodada", e.target.value)} placeholder="Ex: 2" style={inputStyle} />
+                  <QtyPicker
+                    value={form.rodada ? parseInt(form.rodada, 10) : null}
+                    onChange={(n) => updateField("rodada", n)}
+                    options={[1, 2, 3, 4, 5, 6, 7, 8, 9]}
+                    suffix=""
+                    placeholder="Selecionar"
+                  />
                 </Field>
                 <Field label="Colocação final (opcional)">
                   <input value={form.colocacao} onChange={(e) => updateField("colocacao", e.target.value)} placeholder="Ex: 3-1, Top 8" style={inputStyle} />
@@ -1818,7 +1839,7 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
                     <div key={m.id} style={{ background: "#F6F1E1", borderRadius: 8, padding: "10px 12px", borderLeft: `4px solid ${m.tipo === "torneio" ? "#B15C3E" : "#5C7A5E"}` }}>
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                          <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", minWidth: 30, height: 22, padding: "0 4px", borderRadius: 4, background: m.resultado === "vitoria" ? "#4B6B4E" : "#8A3F35", color: "#EFE9D8", fontSize: 11, fontWeight: 700 }}>{m.score}</span>
+                          <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", minWidth: 30, height: 22, padding: "0 4px", borderRadius: 4, background: resultColor(m.resultado), color: "#EFE9D8", fontSize: 11, fontWeight: 700 }}>{m.score}</span>
                           <span style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 15 }}>{m.meuDeck} vs {m.oponenteDeck}</span>
                         </div>
                         <span style={{ fontSize: 11, color: "#8A8270" }}>{m.data}</span>
@@ -1831,8 +1852,8 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
                       <div style={{ display: "flex", gap: 8, marginTop: 6, flexWrap: "wrap" }}>
                         {m.games.map((g, i) => (
                           <span key={i} style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, background: "#EFE9D8", borderRadius: 4, padding: "3px 7px" }}>
-                            <span style={{ width: 16, height: 16, borderRadius: 3, display: "inline-flex", alignItems: "center", justifyContent: "center", background: g.resultado === "vitoria" ? "#4B6B4E" : "#8A3F35", color: "#EFE9D8", fontWeight: 700, fontSize: 10 }}>
-                              {g.resultado === "vitoria" ? "V" : "D"}
+                            <span style={{ width: 16, height: 16, borderRadius: 3, display: "inline-flex", alignItems: "center", justifyContent: "center", background: resultColor(g.resultado), color: "#EFE9D8", fontWeight: 700, fontSize: 10 }}>
+                              {resultLabel(g.resultado)}
                             </span>
                             J{i + 1}{g.playDraw ? ` · ${g.playDraw === "play" ? "Play" : "Draw"}` : ""}{g.mulligan > 0 ? ` · Mull ${g.mulligan}` : ""}
                           </span>
@@ -2330,7 +2351,7 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
                 <SectionLabel>Todas as partidas do mês</SectionLabel>
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                   {[...monthlyReport.matches].reverse().map((m) => (
-                    <div key={m.id} style={{ background: "#F6F1E1", borderRadius: 8, padding: "10px 12px", borderLeft: `4px solid ${m.resultado === "vitoria" ? "#4B6B4E" : "#8A3F35"}` }}>
+                    <div key={m.id} style={{ background: "#F6F1E1", borderRadius: 8, padding: "10px 12px", borderLeft: `4px solid ${resultColor(m.resultado)}` }}>
                       <div style={{ display: "flex", justifyContent: "space-between" }}>
                         <span style={{ fontFamily: "'Zilla Slab', serif", fontWeight: 700, fontSize: 14 }}>{m.meuDeck} vs {m.oponenteDeck}</span>
                         <span style={{ fontSize: 11, color: "#8A8270" }}>{m.data}</span>
@@ -2486,7 +2507,7 @@ function PauperTracker({ user, team, userTeams, onSignOut, onSwitchTeam, onReque
 }
 
 // ---------- Small components ----------
-function QtyPicker({ value, onChange }) {
+function QtyPicker({ value, onChange, options = [1, 2, 3, 4], suffix = "x", placeholder = "—" }) {
   const [open, setOpen] = useState(false);
   const [coords, setCoords] = useState(null);
   const btnRef = useRef(null);
@@ -2524,7 +2545,7 @@ function QtyPicker({ value, onChange }) {
         onClick={() => (open ? setOpen(false) : openPicker())}
         style={{ width: 48, height: 38, borderRadius: 6, border: "1px solid #C9C0A6", background: "#EFE9D8", color: "#2A2621", fontWeight: 700, fontSize: 14, cursor: "pointer" }}
       >
-        {value}x
+        {value ? `${value}${suffix}` : placeholder}
       </button>
       {open && coords && (
         <div
@@ -2532,10 +2553,10 @@ function QtyPicker({ value, onChange }) {
           style={{
             position: "fixed", zIndex: 1000, top: coords.top, left: coords.left,
             background: "#F6F1E1", border: "1px solid #C9C0A6", borderRadius: 8,
-            padding: 8, display: "flex", gap: 6, boxShadow: "0 6px 18px rgba(42,38,33,0.25)",
+            padding: 8, display: "flex", gap: 6, flexWrap: "wrap", maxWidth: 220, boxShadow: "0 6px 18px rgba(42,38,33,0.25)",
           }}
         >
-          {[1, 2, 3, 4].map((n) => (
+          {options.map((n) => (
             <button
               key={n}
               type="button"
@@ -2709,6 +2730,15 @@ function GameRow({ label, game, onChange }) {
               color: game.resultado === "derrota" ? "#EFE9D8" : "#8A3F35",
             }}
           >D</button>
+          <button
+            className="gr-vd"
+            onClick={() => onChange({ resultado: "empate" })}
+            style={{
+              border: game.resultado === "empate" ? "2px solid #2A2621" : "1px solid #C9C0A6",
+              background: game.resultado === "empate" ? "#B08B3E" : "#EFE9D8",
+              color: game.resultado === "empate" ? "#EFE9D8" : "#B08B3E",
+            }}
+          >E</button>
         </div>
         <div className="gr-divider" />
         <div className="gr-mull-wrap">
